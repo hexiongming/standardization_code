@@ -17,7 +17,15 @@ static VersionDisplayCtrl_t s_verCtrlData = {0};
 
 /* 板配置数组 - 编译时根据宏定义初始化 */
 static const BoardConfig_t s_boardConfigs[] = BOARD_CONFIGS_INITIALIZER;
+// 计算板子配置数组长度
+#define BOARD_CFG_COUNT (sizeof(s_boardConfigs) / sizeof(s_boardConfigs[0]))
 
+//示例
+uint16_t borard_version_main_display = 03;
+uint16_t borard_version_main_ctrl = 13;
+uint16_t borard_version_sub_display = 90;
+uint16_t borard_version_suc_display = 359;
+static uint16_t *app_ver = &borard_version_suc_display; //定义需要APP显示的版本号
 
 /********************************************************************************
  * @brief   显示当前板类型或版本号
@@ -54,8 +62,8 @@ static void ShowCurrentBoardOrVersion(void)
     else
     {
         /* 显示版本号 */
-		uint8_t tens = (boardConfig->version) / 10;  //十位
-        uint8_t units = (boardConfig->version) % 10; //个位
+		uint8_t tens = *(boardConfig->version) / 10;  //十位
+        uint8_t units = *(boardConfig->version) % 10; //个位
         DIS_DIGIT_SHOW(0, tens); 
         DIS_DIGIT_SHOW(1, units);
     }
@@ -137,14 +145,14 @@ void DisSoftwareVer_Process(void)
             /* 检查是否已显示完所有板 */
             if (s_verCtrlData.currentIndex >= BOARD_MAX_COUNT)
             {
-				#if(0 == DIS_CYCLE_MODE)
-				/* 所有板显示完毕，退出版本显示模式 */
+                #if(0 == DIS_CYCLE_MODE)
+                /* 所有板显示完毕，退出版本显示模式 */
                 DisSoftwareVer_Stop();
-				return;
-				#else
-				/*循环显示模式 */
-				s_verCtrlData.currentIndex = 0;
-				#endif
+                return;
+                #else
+                /*循环显示模式 */
+                s_verCtrlData.currentIndex = 0;
+                #endif
             }
         }
 		ShowCurrentBoardOrVersion();
@@ -161,6 +169,63 @@ void DisSoftwareVer_Process(void)
 uint8_t DisSoftwareVer_IsActive(void)
 {
     return s_verCtrlData.isActive;
+}
+
+/********************************************************************************
+ * @brief   当前版本号转换成APP显示格式
+ * @details 根据 app_ver 转换成APP显示格式
+ * @param   buf APP显示的版本号接收指针
+ * @param   buf_len APP显示的版本号接收指针长度
+ * @param   dis_mode 显示模式 0:显示主控版本，1:显示所有板子的版本号
+ * @return  len 版本号长度
+ * @note    如测试阶段显示板版本号为13，则APP显示为0.1.3
+ *          如正式阶段显示板版本号为103，则APP显示为1.10.3 		
+ *          若显示所有板子的版本号，则显示为0.A3.B13.C90.D359，或1.A3.B13.C90.D359
+ *******************************************************************************/
+uint8_t Return_APPShowVer(char *buf, uint16_t buf_len,uint8_t dis_mode)
+{
+	int len = 0;
+
+    if(buf == NULL || buf_len == 0)
+    {
+        return 0;
+    }
+	if(dis_mode == 0)
+    {
+		len = snprintf(buf, buf_len, "%d.%d.%d", DIS_VER_MODE, (*app_ver)/10, (*app_ver)%10);
+	}
+	else if(dis_mode == 1)
+	{
+		char *pBuf = buf;
+		size_t remainLen = buf_len;
+
+		//第一个字节为测试或正式版本
+		len = snprintf(pBuf, remainLen, "%d", DIS_VER_MODE);
+		if(len >= remainLen)
+		{
+			// 缓冲区溢出，直接截断
+			buf[buf_len - 1] = '\0';
+		}
+		pBuf += len;
+		remainLen -= len;
+
+		// 循环遍历所有板子配置，自动拼接
+		for(uint8_t i = 0; i < BOARD_CFG_COUNT; i++)
+		{
+			len = snprintf(pBuf, remainLen, ".%c%d", s_boardConfigs[i].boardChar,*s_boardConfigs[i].version);
+			if(len >= remainLen)
+			{
+				buf[buf_len - 1] = '\0';
+				break;
+			}
+			pBuf += len;
+			remainLen -= len;
+		}
+
+		// 最终字符串有效长度
+		len = strlen(buf);
+	}	
+	return len;
 }
 
 /**** (c) *************************** END OF FILE **/
