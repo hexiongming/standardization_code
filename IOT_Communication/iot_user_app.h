@@ -119,12 +119,16 @@ typedef struct
 {
 	const char           *key;				/* 属性描述符 Key */
 	DeviceParam_e        e_param;      		/* 设备属性表 */
-	int32_t              Int_Val;			/* INT 值上次上报的值 */
-	char                 *p_StrVal;			/* STR 值指针 */
 	IOT_AttrType_t       type;				/* 数据类型 */
 	bool_t               write_enable;  	/* true=云端可写 */
 	bool_t               allReport_enable;  /* true=全属性上报使能 */
 } IOT_AttrEntry_t;
+
+typedef union 
+{
+	char                *strValue;	        /* 字符型数据地址*/
+	int32_t              intValue;			/* 整型数据 */			
+} IOT_paramValue_u;
 
 typedef struct {
     const char *jsonKey;		/* JSON键名，如"ROFilterLife" */
