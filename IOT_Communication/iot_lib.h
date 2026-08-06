@@ -141,7 +141,7 @@ void IOT_Lib_Send_ATCmd(const char *cmd);
  * @param  series   系列名，如 "MargaritaIOT"
  * @param  modelId  型号，如 "ADD8666"
  */
-void IOT_Lib_ReportModelId(const char *series, const char *modelId);
+void IOT_Lib_ReportModelId(char *series, char *modelId);
 
 
 //供外部用户调用接口，触发对应模式

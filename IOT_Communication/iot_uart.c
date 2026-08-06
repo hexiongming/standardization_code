@@ -116,15 +116,50 @@ void IOT_UART_Init(void)
  * @return  void
  * @note    当前为阻塞发送，如需 DMA/中断发送，修改平台适配宏即可
  *******************************************************************************/
+/*
+typedef struct 
+{
+	uint8_t tXBusy;
+	uint16_t len;
+	volatile uint8_t *data;
+}UART_SEND_DATA_t;
+UART_SEND_DATA_t pData_Uart;
+*/
 static void IOT_UART_Send(uint8_t *data, uint16_t len)
 {
 	if (data == NULL || len == 0) 
 		return;
 
 	IOT_UART_PLATFORM_SEND(data, len);
+/*
+	pData_Uart.data = data;
+    pData_Uart.len = len;
+	pData_Uart.tXBusy = 1;
+	//置硬件串口发送中断标志位，进入中断发送数据
+*/
 }
+/*
+//将要发送的数据传入硬件串口发送数据寄存器，返回剩余数据长度
+uint8_t uart_interrupt_send(uint8_t *data)
+{
+    UART_SEND_DATA_t *pFrame = &pData_Uart;
 
-
+    if (( pFrame->len > 0U) && pFrame->data != NULL)
+    {
+        *data = *pFrame->data;
+        pFrame->data++;
+        pFrame->len --;
+    }
+    else  //send finished
+    {
+		//IOT_TXSetIdle();
+		pData_Uart.tXBusy = 0;
+		s_iotTxQueue.head = (s_iotTxQueue.head + 1) % IOT_UART_TX_BUF_NUM;
+		s_iotTxQueue.count--;
+    }
+	return pFrame->len;
+}
+*/
 /********************************************************************************
  * @brief   将字符串压入发送队列
  * @details 拷贝完整 AT 帧字符串到队列槽位，队列满时静默丢弃
@@ -198,7 +233,7 @@ uint8_t IOT_TXQueue_Size_Return(void)
  *          间隔未到时保留队头，下次调用再试，不丢失数据
  * @param   void
  * @return  void
- * @note    在 IOT_RX_Handle 中每次调用
+ * @note    在 IOT_TX_Handle 中每次调用
  *******************************************************************************/
 void IOT_TX_Handle(void)
 {

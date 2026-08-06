@@ -159,10 +159,14 @@ void IOT_RX_Handle(void)
  *******************************************************************************/
 void IOT_Lib_Send_ATCmd(const char *cmd)
 {
-	static char txBuf[IOT_UART_TX_BUF_SIZE];
-	memset(txBuf, 0, sizeof(txBuf));
-	snprintf(txBuf, sizeof(txBuf), "AT+%s\r\n", cmd);
-	IOT_UART_TxEnQueue(txBuf);
+	char tx_ATBuf[IOT_UART_TX_BUF_SIZE];
+	if (cmd == NULL)
+	{
+		return;
+	}
+	memset(tx_ATBuf, 0, sizeof(tx_ATBuf));
+	snprintf(tx_ATBuf, sizeof(tx_ATBuf), "AT+%s\r\n", cmd);
+	IOT_UART_TxEnQueue(tx_ATBuf);
 }
 
 /********************************************************************************
@@ -174,7 +178,7 @@ void IOT_Lib_Send_ATCmd(const char *cmd)
  * @return  void
  * @note    须在上电 3 秒后、连网操作之前调用；
  *******************************************************************************/
-void IOT_Lib_ReportModelId(const char *series, const char *modelId)
+void IOT_Lib_ReportModelId(char *series, char *modelId)
 {
 	char txBuf[IOT_UART_TX_BUF_SIZE];
 	snprintf(txBuf, sizeof(txBuf), "MODELID=%s,%s", series, modelId);

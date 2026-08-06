@@ -6,18 +6,15 @@
  * @brief   IoT 业务应用层（应用层）
  * @attention 健康生活事业部 - 软件及 IOT 组
  *
- * 上报规则（协议 V2.0）：
- *   1. 属性字段 1 分钟内上报不超过 1 次
- *   2. 属性与上次不同时立即上报
- *   3. 全属性每 1 小时上报一次（连云成功后立即上报一次）
- *   4. OTA 下载期间停止上报
- *   5. 上电 3 秒后才开始上报（模组指令注册需要 3 秒）
+ * 上报规则：
+ *   1. 属性与上次不同时立即上报
+ *   2. 全属性每 1 小时上报一次（连云成功后立即上报一次）
+ *   3. OTA 下载期间停止上报属性
+ *   4. 上电 3 秒后才开始上报（模组上电初始化需要 3 秒）
  *
  * 新增上报字段说明：
- *   1. 在业务模块（如 App_Key.c）中定义 int32_t 变量
- *   2. 在本文件 s_attrTable[] 数组末尾追加一行：
- *      { "JsonKey", &your_var, IOT_ATTR_INT }
- *   3. 无需修改任何函数
+ *   1. . 在本文件 s_attrTable[] 数组末尾追加一行
+ *      s_attrTable 添加的顺序要与 DeviceParam_e 的顺序一致
 ******************************************************************************/
 #include "iot_user_app.h"
 
@@ -33,86 +30,15 @@ static uint16_t s_AllReportFlag     = 0;		/* 全属性上报标志*/
 static NetTime_t s_NetTime;						/* 网络时间*/
 static FactoryResult_t s_FactoryResult;			/* 产测结果*/
 static NetWorkStatus_t s_NetStatus = NET_STATUS_OFFLINE;	/* 网络状态*/
-
+static char app_mcu_Ver[32];					/* MCU 在APP显示的版本信息*/	
 /* -----------------------------------------------------------------------
  * 外部变量声明或定义，若已在外部文件定义和声明，则包含头文件
  * ----------------------------------------------------------------------- */
-int32_t g_iot_Status;            /* 设备状态							*/
-int32_t g_iot_Flush;             /* 一键冲洗							*/
-int32_t g_iot_InputTemp;         /* 进水温度							*/
-int32_t g_iot_OutputTemp;        /* 出水温度                          */
-int32_t g_iot_SetTemp;           /* 设定温度                          */
-int32_t g_iot_SetOutlet;         /* 设定水量(mL)                      */
-int32_t g_iot_TotalOutlet;       /* 总纯水量(mL)                      */
-int32_t g_iot_PureTDS;           /* 纯水 TDS                          */
-int32_t g_iot_RawTDS;            /* 原水 TDS                          */
-int32_t g_iot_MAXFilterLife;     /* MAX 滤芯剩余百分比                */
-int32_t g_iot_PC5in1FilterLife;  /* 5in1 滤芯剩余百分比               */
-int32_t g_iot_SmartMode;         /* 智能记忆模式                      */
-int32_t g_iot_WinterMode;        /* 冬季模式                          */
-int32_t g_iot_NightModeSet;      /* 夜间模式                          */
-int32_t g_iot_SterilizerState;   /* 杀菌状态                          */
-int32_t g_iot_FamilyMode;        /* 家庭模式                          */
 
-char g_mcu_Ver[16] = MCU_VERSION;
-char g_mcu_Manufacturer[32] = MCU_MANUFACTURER; 
-char	*g_iot_ErrorCode = "E00";		/* 错误码 */
-int32_t g_iot_WaringCode;				/* 告警码 */
-int32_t g_maxFilterResetVal;			/* MAX滤芯复位状态 */
-int32_t g_pc5in1FilterResetVal;			/* PC5in1滤芯复位状态 */
-int32_t g_RefrigerationMode;			/* 制冷状态 */
-
-/* -----------------------------------------------------------------------
- * 云端可写字段的 CallBack 回调
- * 仅需要额外动作的字段才定义回调，普通赋值字段传 NULL 即可
- * ----------------------------------------------------------------------- */
-
-/********************************************************************************
- * @brief   滤芯复位写入回调
- * @details val==3 时执行 MAX 滤芯复位动作
- * @param   val: 云端下发值
- *******************************************************************************/
-static void CallBack_MAXFilterReset(void *pData)
-{
-	int32_t val = *(int32_t *)pData; // 强制转换回 int32_t*
-	if (val == 3)
-	{
-		/* TODO: 执行 MAX 滤芯复位 */
-	}
-}
-
-/********************************************************************************
- * @brief   5in1 滤芯复位写入回调
- * @param   val: 云端下发值
- *******************************************************************************/
-static void CallBack_PC5in1FilterReset(void *pData)
-{
-	int32_t val = *(int32_t *)pData; // 强制转换回 int32_t* 再取值
-	if (val == 3)
-	{
-		/* TODO: 执行 5in1 滤芯复位 */
-	}
-	else if (val == 4)
-	{
-		/* TODO: 执行 5in1 滤芯撤销复位 */
-	}
-}
-static void CallBack_RefrigerationMode(void *pData)
-{
-	int32_t val = *(int32_t *)pData; // 强制转换回 int32_t* 再取值
-	if (val == 1)
-	{
-		char txBuf[IOT_UART_TX_BUF_SIZE];
-		snprintf(txBuf, sizeof(txBuf), "OooooooooK=%d", 0x01);
-		IOT_Lib_Send_ATCmd(txBuf);
-	}
-	else if (val == 0)
-	{
-		char txBuf[IOT_UART_TX_BUF_SIZE];
-		snprintf(txBuf, sizeof(txBuf), "OK=%d", 0x00);
-		IOT_Lib_Send_ATCmd(txBuf);
-	}
-}
+char g_mcu_Manufacturer[32]="Philips";
+char g_device_Series[32] = "MargaritaIOT";
+char g_device_ModelID[32] = "Margarita01"; 
+char g_iot_ErrorCode[5] = "E00";
 
 /* -----------------------------------------------------------------------
  * 属性描述符表（上报属性注册表）
@@ -125,30 +51,115 @@ static void CallBack_RefrigerationMode(void *pData)
  * ----------------------------------------------------------------------- */
 static IOT_AttrEntry_t s_attrTable[]=
 {
-	//jsonkey,               value,                         lastVal,       type,           write,    allReport,   CallBack
-	{"Ver",                  (int32_t*)&g_mcu_Ver,            0,          IOT_ATTR_STR,    false,      true,      NULL},
-	{"McuManufacturer",      (int32_t*)&g_mcu_Manufacturer,   0,          IOT_ATTR_STR,    false,      true,      NULL},
-	{"Status",               &g_iot_Status,                   0,          IOT_ATTR_INT,    false,      true,      NULL},
-	{"InputTemp",            &g_iot_InputTemp,                0,          IOT_ATTR_INT,    false,      true,      NULL},
-	{"OutputTemp",           &g_iot_OutputTemp,               0,          IOT_ATTR_INT,    false,      true,      NULL},
-	{"SetTemp",              &g_iot_SetTemp,                  0,          IOT_ATTR_INT,    true,       true,      NULL},
-	{"SetOutlet",            &g_iot_SetOutlet,                0,          IOT_ATTR_INT,    true,       true,      NULL},
-	{"TotalOutlet",          &g_iot_TotalOutlet,              0,          IOT_ATTR_INT,    false,      true,      NULL},
-	{"PureTDS",              &g_iot_PureTDS,                  0,          IOT_ATTR_INT,    false,      true,      NULL},
-	{"RawTDS",               &g_iot_RawTDS,                   0,          IOT_ATTR_INT,    false,      true,      NULL},
-	{"WarmWaterSet",         &g_iot_SmartMode,                0,          IOT_ATTR_INT,    true,       true,      NULL},
-	{"HotWaterSet",          &g_iot_WinterMode,               0,          IOT_ATTR_INT,    true,       true,      NULL},
-	{"Outlet120Set",         &g_iot_NightModeSet,             0,          IOT_ATTR_INT,    true,       true,      NULL},
-	{"Outlet350Set",         &g_iot_SterilizerState,          0,          IOT_ATTR_INT,    true,       true,      NULL},
-	{"Outlet800Set",         &g_iot_FamilyMode,               0,          IOT_ATTR_INT,    true,       true,      NULL},
-	{"SterilizerState",      &g_iot_SterilizerState,          0,          IOT_ATTR_INT,    true,       true,      NULL},
-	{"RefrigerationMode",    &g_RefrigerationMode,            0,          IOT_ATTR_INT,    true,       true,      CallBack_RefrigerationMode},
-	{"MAXFilterReset",       &g_maxFilterResetVal,            0,          IOT_ATTR_INT,    true,       false,     CallBack_MAXFilterReset},
-	{"PC5in1FilterReset",    &g_pc5in1FilterResetVal,         0,          IOT_ATTR_INT,    true,       false,     CallBack_PC5in1FilterReset},
+	//jsonkey,               param,                    Int_Val,   p_StrVal,               type,            write,    allReport   
+	{"Ver",                  VER,                      0,         app_mcu_Ver,            IOT_ATTR_STR,    false,      true,      },
+	{"McuManufacturer",      MCUMANUFACTURER,          0,         g_mcu_Manufacturer,     IOT_ATTR_STR,    false,      true,      },
+	{"Status",               STATUS,                   0,         NULL,                   IOT_ATTR_INT,    false,      true,      },
+	{"InputTemp",            INPUTTEMP,                0,         NULL,                   IOT_ATTR_INT,    false,      true,      },
+	{"OutputTemp",           OUTPUTTEMP,               0,         NULL,                   IOT_ATTR_INT,    false,      true,      },
+	{"SetTemp",              SETTEMP,                  0,         NULL,                   IOT_ATTR_INT,    true,       true,      },
+	{"SetOutlet",            SETOUTLET,                0,         NULL,                   IOT_ATTR_INT,    true,       true,      },
+	{"TotalOutlet",          TOTALOUTLET,              0,         NULL,                   IOT_ATTR_INT,    false,      true,      },
+	{"PureTDS",              PURETDS,                  0,         NULL,                   IOT_ATTR_INT,    false,      true,      },
+	{"RawTDS",               RAWTDS,                   0,         NULL,                   IOT_ATTR_INT,    false,      true,      },
+	{"WarmWaterSet",         WARMWATERSET,             0,         NULL,                   IOT_ATTR_INT,    true,       true,      },
+	{"HotWaterSet",          HOTWATERSET,              0,         NULL,                   IOT_ATTR_INT,    true,       true,      },
+	{"Outlet120Set",         OUTLET120SET,             0,         NULL,                   IOT_ATTR_INT,    true,       true,      },
+	{"Outlet350Set",         OUTLET350SET,             0,         NULL,                   IOT_ATTR_INT,    true,       true,      },
+	{"Outlet800Set",         OUTLET800SET,             0,         NULL,                   IOT_ATTR_INT,    true,       true,      },
+	{"SterilizerState",      STERILIZERSTATE,          0,         NULL,                   IOT_ATTR_INT,    true,       true,      },
+	{"RefrigerationMode",    REFRIGERATIONMODE,        0,         NULL,                   IOT_ATTR_STR,    true,       true,      },
+	{"MAXFilterReset",       MAXFILTERRESET,           0,         NULL,                   IOT_ATTR_INT,    true,       false,     },
+	{"PC5in1FilterReset",    PC5IN1FILTERRESET,        0,         NULL,                   IOT_ATTR_INT,    true,       false,     },
+
+	{"aiPlan",               AIPLAN,                   0,         NULL,                   IOT_ATTR_JSON,   true,       false,     },
+
+	{"ErrorCode",            ERRORCODE,                0,         g_iot_ErrorCode,        IOT_ATTR_STR,    false,      false,     },
+	{"Warning",              WARNING,                  0,         NULL,                   IOT_ATTR_INT,    false,      false,     },
+	
 	/*END----新增字段在此行之前追加----*/
 };
 
 #define ATTR_TABLE_SIZE  (sizeof(s_attrTable) / sizeof(s_attrTable[0]))
+
+/********************************************************************************
+ * @brief   APP下发的设备指令数据功能执行操作函数
+ * @details 针对所有属性命令进行下发的命令执行
+ * @param   param: 下发的设备属性枚举
+ * @param   int_value: 下发命令整型数据值
+ * @param   str_value: 下发命令字符型/json数据值
+ * @return  void
+ * @brief   兼容整型和字符型命令的解析，根据实际数据类型进行应用和修改
+ *******************************************************************************/
+static void Device_Cmd_Process(DeviceParam_e param,uint32_t int_value,char *str_value)
+{
+	switch (param)
+	{
+		case SETTEMP://示例 根据实际需要更改
+			if (int_value == 1)
+			{
+				//设置水温
+			}
+			else if (int_value == 0)
+			{
+				//关闭加热
+			}
+			break;
+
+		case SETOUTLET:
+			/* code */
+			break;
+
+		case WARMWATERSET:
+			/* code */
+			break;
+
+		case HOTWATERSET:
+			/* code */
+			break;	
+
+		default:
+			break;
+	}
+}
+
+/********************************************************************************
+ * @brief   设备属性的参数值获取更新函数，由应用层变量赋值给属性描述符表的value
+ * @details 针对所有属性命令进行下发的命令执行
+ * @param   param: 设备属性枚举
+ * @return  设备属性值
+ * @brief   仅支持整型变量更新，字符型变量以变量地址传入，只要变量地址不变，就不需重新获取
+ *******************************************************************************/
+static uint32_t Device_ParamVlaue_Get(DeviceParam_e param)
+{
+	uint32_t value = 0;
+	static uint8_t test_value = 0;
+
+	switch (param)
+	{
+		case SETTEMP://示例 根据实际需要更改
+			value = test_value ++;
+			break;
+
+		case SETOUTLET:
+			/* code */
+			break;
+
+		case WARMWATERSET:
+			/* code */
+			break;
+
+		case HOTWATERSET:
+			/* code */
+			break;
+
+		default:
+			break;
+	}
+
+	return value;
+}
+
 
 #if HAVE_FILTER
 /* -----------------------------------------------------------------------
@@ -188,6 +199,8 @@ static const FilterResetConfig_t s_filterResetConfig[] = {
 #define FILTER_RESET_CONFIG_COUNT  (sizeof(s_filterResetConfig) / sizeof(s_filterResetConfig[0]))
 #endif
 
+/**************************************************** 以下无需/禁止修改 *******************************************************/
+
 /********************************************************************************
  * @brief   初始化 JSON 构建器，
  * @details buf 格式：MQTTSEND=N,{...}\r\n
@@ -199,6 +212,10 @@ static const FilterResetConfig_t s_filterResetConfig[] = {
  *******************************************************************************/
 static void JsonBuff_Begin(JsonBuilder_t *JsonBuff)
 {
+	if (JsonBuff == NULL)
+	{
+		return;
+	}
 	const char *header = "{";
 	uint16_t hlen = (uint16_t)strlen(header);
 	memcpy(JsonBuff->buf, header, hlen);
@@ -220,6 +237,11 @@ static void JsonBuff_End(JsonBuilder_t *JsonBuff)
 {
 	char txBuf[IOT_PKG_MAX_SIZE];
 
+	if (JsonBuff == NULL)
+	{
+		return;
+	}
+
 	if (!JsonBuff->hasField)
 	{
 		JsonBuff_Begin(JsonBuff);
@@ -237,7 +259,8 @@ static void JsonBuff_End(JsonBuilder_t *JsonBuff)
 	 int ret = snprintf(txBuf, sizeof(txBuf), "MQTTSEND=%u,%s", jsonLen, JsonBuff->buf);
     
     // 检查是否截断
-    if (ret < 0 || ret >= sizeof(txBuf)) {
+    if (ret < 0 || ret >= sizeof(txBuf)) 
+	{
         // 处理错误：数据包太大，可能需要分包或丢弃
         JsonBuff_Begin(JsonBuff);
         return;
@@ -261,6 +284,11 @@ static void JsonBuff_AddInt(JsonBuilder_t *JsonBuff, const char *key, int32_t va
 {
 	char tmp[64];
 
+	if (JsonBuff == NULL || key == NULL)
+	{
+		return;
+	}
+
 	int n = snprintf(tmp, sizeof(tmp), "%s\"%s\":%ld",
 					 JsonBuff->hasField ? "," : "", key, (long)val);
 
@@ -280,6 +308,11 @@ static void JsonBuff_AddStr(JsonBuilder_t *JsonBuff, const char *key, const char
 {
 	char tmp[64];
 
+	if (JsonBuff == NULL || key == NULL)
+	{
+		return;
+	}
+
 	int n = snprintf(tmp, sizeof(tmp), "%s\"%s\":\"%s\"",
 					 JsonBuff->hasField ? "," : "", key, val);
 
@@ -294,26 +327,18 @@ static void JsonBuff_AddStr(JsonBuilder_t *JsonBuff, const char *key, const char
  * @brief   从 JSON 字符串中提取整型字段值
  * @details 搜索 "key": 模式，跳过空格后解析十进制整数，
  *          支持正负数，不依赖第三方 JSON 库
- * @param   json: 原始 JSON 字符串
- * @param   key:  目标字段名
+ * @param   p: 属性值起始地址
  * @param   out:  输出整型值的存储地址
  * @return  bool: true=找到并解析成功  false=字段不存在或格式错误
  * @note    仅做简单线性搜索，不支持嵌套 JSON
  *******************************************************************************/
-static bool Json_Get_Int_Value(const char *json, const char *key, int32_t *out)
+static bool Json_Get_Int_Value(const char *p, int32_t *out)
 {
-	if (json == NULL || key == NULL || out == NULL)
+	if (p == NULL || out == NULL)
         return false;
-	/* 搜索 "key": */
-	char search[64];
 
-	snprintf(search, sizeof(search), "\"%s\":", key);
-	const char *p = strstr(json, search);
-	if (p == NULL) 
-		return false;
-
-	p += strlen(search);
-	while (*p == ' ') p++;  /* 跳过空格 */
+	while (*p == ' ') 
+		p++;  /* 跳过空格 */
 
 	char *endPtr;
     long val = strtol(p, &endPtr, 10);
@@ -329,24 +354,54 @@ static bool Json_Get_Int_Value(const char *json, const char *key, int32_t *out)
  * @brief   从 JSON 字符串中提取字符串字段值
  * @details 搜索 "key":"  模式，提取两个双引号之间的内容，
  *          自动追加 '\0' 终止符
- * @param   json:   原始 JSON 字符串
- * @param   key:    目标字段名
+ * @param   p:   属性值起始地址
  * @param   outBuf: 输出字符串缓冲区
  * @param   bufLen: 缓冲区容量（含 '\0'）
  * @return  bool: true=找到并提取成功  false=字段不存在或值为空
  * @note    仅做简单线性搜索，不支持转义字符
  *******************************************************************************/
-static bool Json_Get_Str_Value(const char *json, const char *key, char *outBuf, uint16_t bufLen)
+static bool Json_Get_Str_Value(const char *p, char *outBuf, uint16_t bufLen)
 {
-	char search[48];
-	snprintf(search, sizeof(search), "\"%s\":\"", key);
-	const char *p = strstr(json, search);
-	if (p == NULL) 
-		return false;
-
-	p += strlen(search);
 	uint16_t i = 0;
+
+	if (p == NULL || outBuf == NULL)
+        return false;
+
+	p = strchr(p, '"');
+	if(p)
+	{	
+		p++; //跳过'"'，去获取实际参数
+	}
 	while (*p != '"' && *p != '\0' && i < bufLen - 1)
+	{
+		outBuf[i++] = *p++;
+	}
+	outBuf[i] = '\0';
+	return (i > 0);
+}
+
+/********************************************************************************
+ * @brief   从 JSON 字符串中提取字符串字段值
+ * @details 搜索 "key":"  模式，提取两个双引号之间的内容，
+ *          自动追加 '\0' 终止符
+ * @param   p:   属性值起始地址
+ * @param   outBuf: 输出字符串缓冲区
+ * @param   bufLen: 缓冲区容量（含 '\0'）
+ * @return  bool: true=找到并提取成功  false=字段不存在或值为空
+ * @note    仅做简单线性搜索，不支持转义字符
+ *******************************************************************************/
+static bool Json_Get_JSON_Value(const char *p, char *outBuf, uint16_t bufLen)
+{
+	uint16_t i = 0;
+	if (p == NULL || outBuf == NULL)
+        return false;
+
+	p = strchr(p, '{');
+	if(p)
+	{	
+		p++; //跳过'{'，去获取实际参数
+	}
+	while (*p != '}' && *p != '\0' && i < bufLen - 1)
 	{
 		outBuf[i++] = *p++;
 	}
@@ -368,7 +423,7 @@ static void IOT_MQTTRECV_Handle(const char *json)
 {
 	int32_t val;
 	const char *jsonStart = json;
-	char outBuf[64];
+	char outBuf[IOT_SINGLE_INSTRUCTION_MAX_LEN];
 
 	if (json == NULL) 
 		return;
@@ -386,31 +441,43 @@ static void IOT_MQTTRECV_Handle(const char *json)
 
 	for (uint16_t i = 0; i < ATTR_TABLE_SIZE; i++)
 	{
+		char search[64];
 		IOT_AttrEntry_t *e = &s_attrTable[i];
+
+		snprintf(search, sizeof(search), "\"%s\":", e->key);
+		const char *p = strstr(jsonStart, search);					//下发指令与属性表key值比较，相同则继续，不同则比较下一个
+		if (p == NULL) 
+			continue;
+
 		if (!e->write_enable) 
 			continue;
 
+		p += strlen(search);
 		if(e->type == IOT_ATTR_INT)
 		{
-			if (Json_Get_Int_Value(jsonStart, e->key, &val))
+			if (Json_Get_Int_Value(p, &val))
 			{
-				*e->pVal = val;
-				if (e->CallBack != NULL)
-				{
-					e->CallBack(&val);
-				}
+				Device_Cmd_Process(e->e_param, val, NULL);
+				IOT_UserApp_InitiativeReport(e->e_param);             //主动上报该控制命令的执行结果；
 			}
 		}
 		else if(e->type == IOT_ATTR_STR)
 		{
-			if (Json_Get_Str_Value(jsonStart, e->key, outBuf,sizeof(outBuf)))
+			if (Json_Get_Str_Value(p, outBuf,sizeof(outBuf)))
 			{
-				if (e->CallBack != NULL)
-				{
-					e->CallBack(outBuf);
-				}
+				Device_Cmd_Process(e->e_param, 0, outBuf);
+				IOT_UserApp_InitiativeReport(e->e_param);             //主动上报该控制命令的执行结果；
 			}
 		}
+		else if(e->type == IOT_ATTR_JSON)
+		{
+			if (Json_Get_JSON_Value(p, outBuf,sizeof(outBuf)))
+			{
+				Device_Cmd_Process(e->e_param, 0, outBuf);
+			}
+		}
+		
+		break;
 	}
 }
 
@@ -514,24 +581,27 @@ static void IOT_UserApp_ReportAll(void)
 		IOT_AttrEntry_t *e = &s_attrTable[i];
 		if(e->allReport_enable)
 		{
-			
-			if (e->type == IOT_ATTR_STR)
-			{/* 16(AT+MQTTSEND=xxx,) + pos + e->key + e->pVal + 7(":""}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
-				if ((16 + JsonBuff.pos + strlen(e->key) + strlen((char *)e->pVal) + 7) > IOT_PKG_MAX_SIZE)
+			if (e->type == IOT_ATTR_STR || e->type == IOT_ATTR_JSON)
+			{
+				if(e->p_StrVal == NULL)
+					continue;
+				/* 16(AT+MQTTSEND=xxx,) + pos + e->key + e->p_StrVal + 7(":""}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
+				if ((16 + JsonBuff.pos + strlen(e->key) + strlen((char *)e->p_StrVal) + 7) > IOT_PKG_MAX_SIZE)
 				{
 					break;
 				}
-				JsonBuff_AddStr(&JsonBuff, e->key, (const char *)e->pVal);
-				e->lastVal = (int32_t)(uint32_t)e->pVal; 
+				JsonBuff_AddStr(&JsonBuff, e->key, (const char *)e->p_StrVal);
 			}
 			else
-			{/* 16(AT+MQTTSEND=xxx,) + pos + e->key + e->pVal + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
-				if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(e->pVal) + 5) > IOT_PKG_MAX_SIZE)
+			{
+				int32_t cur = Device_ParamVlaue_Get(e->e_param);
+				/* 16(AT+MQTTSEND=xxx,) + pos + e->key + cur + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
+				if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(cur) + 5) > IOT_PKG_MAX_SIZE)
 				{
 					break;
 				}
-				JsonBuff_AddInt(&JsonBuff, e->key, *e->pVal);
-				e->lastVal = *e->pVal;
+				JsonBuff_AddInt(&JsonBuff, e->key, cur);
+				e->Int_Val = cur;
 			}
 		}
 		s_reportIndex = i + 1;
@@ -571,20 +641,20 @@ static void IOT_UserApp_ReportDiff(void)
 		IOT_AttrEntry_t *e = &s_attrTable[i];
 		if (e->type == IOT_ATTR_INT)
 		{
-			int32_t cur = *e->pVal;
-			if (cur != e->lastVal)
-			{/* 16(AT+MQTTSEND=xxx,) + pos + e->key + e->pVal + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
-				if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(e->pVal) + 5) > IOT_PKG_MAX_SIZE)
+			int32_t cur = Device_ParamVlaue_Get(e->e_param);
+			if (cur != e->Int_Val)
+			{/* 16(AT+MQTTSEND=xxx,) + pos + e->key + cur + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
+				if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(cur) + 5) > IOT_PKG_MAX_SIZE)
 				{
 					break;
 				}
 				JsonBuff_AddInt(&JsonBuff, e->key, cur);
-				e->lastVal = cur;
+				e->Int_Val = cur;
 			}
 		}
 		else
 		{
-			//常量字符串不支持比较上报
+			//字符串不支持比较上报，如有需要单独上报
 		}
 		s_reportIndex = i + 1;
 	}
@@ -600,37 +670,50 @@ static void IOT_UserApp_ReportDiff(void)
 }
 
 /********************************************************************************
- * @brief   错误代码上报
- * @details 上电连云成功后上报一次，其余时间有故障触发时立即上报
- * @param   errorCode 要上报的错误代码
+ * @brief   主动上报某些属性
+ * @details  主动上报 s_attrTable[]属性表的值
+ * @param   DeviceParam_e
  * @return  void
- * @note    需要使用时调用
+ * @note    需要主动上报某个属性的时候调用，每次只能上报一个属性
  *******************************************************************************/
-void IOT_UserApp_ReportErrorCode(char *errorCode)
+void IOT_UserApp_InitiativeReport(DeviceParam_e param)
 {
-/* 单独上报 ErrorCode*/
-	char txBuf[IOT_UART_TX_BUF_SIZE];
-	snprintf(txBuf, sizeof(txBuf), "MQTTSEND=%u,{\"ErrorCode\":\"%s\"}",
-				(unsigned)(snprintf(NULL, 0, "{\"ErrorCode\":\"%s\"}", errorCode)),
-				errorCode);
-	IOT_Lib_Send_ATCmd(txBuf);
-}
+	JsonBuilder_t JsonBuff;
+	JsonBuff_Begin(&JsonBuff);
 
-/********************************************************************************
- * @brief   告警代码上报
- * @details 上电连云成功后上报一次，其余时间有告警触发时立即上报
- * @param   errorCode 要上报的告警代码
- * @return  void
- * @note    需要使用时调用
- *******************************************************************************/
-void IOT_UserApp_ReportWaringCode(int32_t waringCode)
-{
-/* 单独上报 WaingCode*/
-	char txBuf[IOT_UART_TX_BUF_SIZE];
-	snprintf(txBuf, sizeof(txBuf), "MQTTSEND=%u,{\"Warning\":%ld}",
-				(unsigned)(snprintf(NULL, 0, "{\"Warning\":%ld}", (long)waringCode)),
-				(long)waringCode);
-	IOT_Lib_Send_ATCmd(txBuf);
+	IOT_AttrEntry_t *e = &s_attrTable[param];
+
+	if (e->type == IOT_ATTR_STR || e->type == IOT_ATTR_JSON)
+	{
+		if(e->p_StrVal == NULL)
+			return;
+		/* 16(AT+MQTTSEND=xxx,) + pos + e->key + e->p_StrVal + 7(":""}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
+		if ((16 + JsonBuff.pos + strlen(e->key) + strlen((char *)e->p_StrVal) + 7) > IOT_PKG_MAX_SIZE)
+		{
+			return;
+		}
+		JsonBuff_AddStr(&JsonBuff, e->key, (const char *)e->p_StrVal);
+	}
+	else if (e->type == IOT_ATTR_INT)
+	{
+		uint32_t cur = Device_ParamVlaue_Get(e->e_param);
+		/* 16(AT+MQTTSEND=xxx,) + pos + e->key + cur + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
+		if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(cur) + 5) > IOT_PKG_MAX_SIZE)
+		{
+			return;
+		}
+		JsonBuff_AddInt(&JsonBuff, e->key, cur);
+		e->Int_Val = cur;
+	}
+	else
+	{
+		return;
+	}
+
+	if (JsonBuff.hasField) 
+	{
+		JsonBuff_End(&JsonBuff);  /* 将最后一包闭合入队 */
+	}
 }
 
 /********************************************************************************
@@ -644,7 +727,7 @@ static void IOT_UserApp_CheckMCUOTA(void)
 {
 /* 单独上报 mcu version*/
 	char txBuf[IOT_UART_TX_BUF_SIZE];
-	snprintf(txBuf, sizeof(txBuf), "MCUOTACHECK=%s",MCU_VERSION);
+	snprintf(txBuf, sizeof(txBuf), "MCUOTACHECK=\"%s\"",app_mcu_Ver);
 	IOT_Lib_Send_ATCmd(txBuf);
 }
 
@@ -781,8 +864,8 @@ static void IOT_Event_Handle(const IOT_Event_t *evt)
 				s_NetStatus =  NET_STATUS_ONLINE;
 
 				/* 连云成功立即上报一次 ErrorCode + Warning + MCU版本号 */
-				IOT_UserApp_ReportErrorCode(g_iot_ErrorCode);
-				IOT_UserApp_ReportWaringCode(g_iot_WaringCode);
+				IOT_UserApp_InitiativeReport(ERRORCODE);
+				IOT_UserApp_InitiativeReport(WARNING);
 				/* 检查 MCU OTA 版本 */
 				IOT_UserApp_CheckMCUOTA();
 			}
@@ -831,7 +914,7 @@ static void IOT_Event_Handle(const IOT_Event_t *evt)
 
 		case IOT_EVT_MCUOTA_VERSION:
 			/* 比较版本，决定是否下载 */
-			if (strcmp(evt->para_buf, MCU_VERSION) != 0)
+			if (strcmp(evt->para_buf, app_mcu_Ver) != 0)
 			{
 				Mcu_Ota_Set_State(MCU_OTA_STATE_WAIT_DOWNLOAD);
 				IOT_Lib_Send_ATCmd("MCUOTADOWNLOAD");
@@ -938,17 +1021,10 @@ NetWorkStatus_t IOT_Return_NetStatus(void)
  *******************************************************************************/
 void IOT_UserApp_Init(void)
 {
-	for(uint16_t i = 0; i < ATTR_TABLE_SIZE; i++)
-	{
-		IOT_AttrEntry_t *e = &s_attrTable[i];
-		if (e->type == IOT_ATTR_INT)
-		{
-			e->lastVal = ~*e->pVal;			//确保非全属性上报的值为0时可以执行差异属性上报
-		}
-	}
-
-
 	s_bootCounter = 0;
+
+	//获取需要APP显示的版本号
+	Return_APPShowVer(app_mcu_Ver,sizeof(app_mcu_Ver),APP_DISVER_MODE);
 
 	/* 初始化 底层UART 根据实际情况增删改*/
 	IOT_UART_Init();
@@ -1001,7 +1077,7 @@ void IOT_UserApp_Handle(void)
 	if (!s_bootCmdSent) 
 	{
 		s_bootCmdSent = true;
-		IOT_Lib_ReportModelId(DEVICE_SERIES, DEVICE_MODEL_ID);
+		IOT_Lib_ReportModelId(g_device_Series, g_device_ModelID);
 	#if HAVE_FILTER
 		FilterRegisrter();
 		FilterResetRegisrter();
