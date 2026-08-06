@@ -9,28 +9,33 @@
  *****************************************************************************/
 /**
  * 移植需要修改的点：
- * 1、DIS_VER_MODE 显示模式0：测试 1：正式
- * 2、BoardType_e、BoardChar_e 板类型、板代表的符号及对应版本号的定义，版本号可以宏定义指向获取
- * 3、根据上面的定义，修改配置数组宏定义：BOARD_CONFIGS_INITIALIZER
- * 4、包含对应接口的头文件
+ * 1、 DIS_VER_MODE 显示模式0：测试 1：正式
+ * 2、 BoardType_e 、 BoardChar_e 板类型、板代表的符号及对应版本号的定义，版本号可以宏定义指向获取
+ * 3、 根据上面的定义，修改配置数组宏定义：BOARD_CONFIGS_INITIALIZER
+ * 4、 配置各个板子的版本号存储变量，可以通过通信获取后赋值或直接用全局变量获取；
+ * 5、 app_ver 映射到需要APP显示的主控版本号
  * 
  * 本文件提供以下接口供外部调用：
- * void DisSoftwareVer_Start(void);				//启动版本显示流程，启动后会立即显示第一个板的标识
- * void DisSoftwareVer_Stop(void);				//停止版本显示流程，可在显示过程中随时调用以提前退出
- * void DisSoftwareVer_Process(void);			//版本显示处理函数，每10ms调用一次，确保时序准确
- * uint8_t DisSoftwareVer_IsActive(void);		//检查是否正在显示版本信息，0:未显示, 1:正在显示
+ * void DisSoftwareVer_Start(void);				启动版本显示流程，启动后会立即显示第一个板的标识
+ * void DisSoftwareVer_Stop(void);				停止版本显示流程，可在显示过程中随时调用以提前退出
+ * void DisSoftwareVer_Process(void);			版本显示处理函数，每10ms调用一次，确保时序准确
+ * uint8_t DisSoftwareVer_IsActive(void);		检查是否正在显示版本信息，0:未显示, 1:正在显示
+ * uint8_t Return_APPShowVer(char *buf, uint16_t buf_len);    需要显示的版本号转换成APP显示格式返回给buf
+
  */
 
 #ifndef DIS_SOFTWARE_VER_H
 #define DIS_SOFTWARE_VER_H
 
 #include <stdint.h>
-
-//#include "digit_display.h"
+#include <stdio.h>
+#include <string.h>
+#include "digit_display.h"
 
 /* 版本显示模式宏定义 */
-#define DIS_VER_MODE          1     /* 0:开发阶段(UA,UB,UC...)，1:正式阶段(A,B,C...) */
-#define DIS_CYCLE_MODE        1     /* 0:显示一次即退出，1:循环显示 */		
+#define DIS_VER_MODE         1     /* 0:开发阶段(UA,UB,UC...)，1:正式阶段(A,B,C...) */
+#define DIS_CYCLE_MODE       1     /* 0:显示一次即退出，1:循环显示 */	
+#define APP_DISVER_MODE      0     /* 0:APP只显示主控板的版本号，1:APP显示所有板子的版本号 */	
 
 /* 调用时间 */
 #define DIS_CALL_TIME        10     				/* 函数调用时间，单位ms，建议10ms周期调用 */
@@ -55,19 +60,19 @@ typedef enum {
 	BOARD_CHAR_SUC_DISPLAY = 'D',   /* 副显示屏字符: C */
 } BoardChar_e;
 
-/* 各板版本号宏定义 - 用户根据实际需求配置 */
-#define BOARD_VERSION_MAIN_DISPLAY     23     /* 主显示板版本号 (00-99) */
-#define BOARD_VERSION_MAIN_CTRL        20     /* 主控板版本号 (00-99) */
-#define BOARD_VERSION_SUB_DISPLAY      99     /* 副显示屏版本号 (00-99) */
-#define BOARD_VERSION_SUC_DISPLAY      359     /* 副显示屏版本号 (00-99) */
+/* 存储各板版本号的变量 - 用户根据实际需求配置 */
+extern uint16_t borard_version_main_display;
+extern uint16_t borard_version_main_ctrl;
+extern uint16_t borard_version_sub_display;
+extern uint16_t borard_version_suc_display;
 
 /* 板配置数组 - 编译时根据宏定义初始化 */
 #define BOARD_CONFIGS_INITIALIZER  \
 {                               \
-	{BOARD_MAIN_DISPLAY, BOARD_CHAR_MAIN_DISPLAY, BOARD_VERSION_MAIN_DISPLAY}, \
-	{BOARD_MAIN_CTRL,    BOARD_CHAR_MAIN_CTRL,    BOARD_VERSION_MAIN_CTRL},    \
-	{BOARD_SUB_DISPLAY,  BOARD_CHAR_SUB_DISPLAY,  BOARD_VERSION_SUB_DISPLAY},  \
-	{BOARD_SUC_DISPLAY,  BOARD_CHAR_SUC_DISPLAY,  BOARD_VERSION_SUC_DISPLAY},  \
+	{BOARD_MAIN_DISPLAY, BOARD_CHAR_MAIN_DISPLAY, &borard_version_main_display}, \
+	{BOARD_MAIN_CTRL,    BOARD_CHAR_MAIN_CTRL,    &borard_version_main_ctrl},    \
+	{BOARD_SUB_DISPLAY,  BOARD_CHAR_SUB_DISPLAY,  &borard_version_sub_display},  \
+	{BOARD_SUC_DISPLAY,  BOARD_CHAR_SUC_DISPLAY,  &borard_version_suc_display},  \
 }\
 
 /* 数码管显示函数宏定义 - 可根据硬件平台修改 */
@@ -78,13 +83,20 @@ typedef enum {
 #endif
 
 
-/* 结构体定义 */
+/***********************结构体定义**************************/
+
+/* 版本号 */
+typedef struct {
+    uint8_t mcu_ver_mode;     /* 版本模式：0-测试，1正式 */
+    uint8_t mcu_ver_ten;      /* 版本号十位 */
+    uint8_t mcu_ver_uints;    /* 版本号个位 */
+} MCU_Ver_t;
 
 /* 板配置结构体 - 包含板类型和版本号 */
 typedef struct {
     BoardType_e boardType;    /* 板类型 */
     BoardChar_e boardChar;    /* 板字符 */
-    uint16_t version;         /* 版本号 (0-359) */
+    uint16_t *version;         /* 版本号 (0-359) */
 } BoardConfig_t;
 
 /* 版本显示控制结构体 */
@@ -98,6 +110,7 @@ typedef struct
 
 
 /* 函数声明 */
+
 /********************************************************************************
  * @brief   启动版本显示流程
  * @details 从第一个板开始按顺序显示板标识和版本号
@@ -133,6 +146,20 @@ void DisSoftwareVer_Process(void);
  * @note    可用于判断是否可以执行其他显示任务
  *******************************************************************************/
 uint8_t DisSoftwareVer_IsActive(void);
+
+/********************************************************************************
+ * @brief   当前版本号转换成APP显示格式
+ * @details 根据 app_ver 转换成APP显示格式
+ * @param   buf APP显示的版本号接收指针
+ * @param   buf_len APP显示的版本号接收指针长度
+ * @param   dis_mode 显示模式 0:显示主控版本，1:显示所有板子的版本号
+ * @return  len 版本号长度
+ * @note    如测试阶段显示板版本号为13，则APP显示为0.1.3
+ *          如正式阶段显示板版本号为103，则APP显示为1.10.3 		
+ *******************************************************************************/
+uint8_t Return_APPShowVer(char *buf, uint16_t buf_len,uint8_t dis_mode);
+
+
 
 #endif
 
