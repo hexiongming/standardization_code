@@ -92,7 +92,7 @@ static IOT_paramValue_u s_paramValue[ATTR_TABLE_SIZE] = {0};
  * @return  void
  * @brief   兼容整型和字符型命令的解析，根据实际数据类型进行应用和修改
  *******************************************************************************/
-static void Device_Cmd_Process(DeviceParam_e param,uint32_t int_value,char *str_value)
+static void Device_Cmd_Process(DeviceParam_e param, int32_t int_value, char *str_value)
 {
 	switch (param)
 	{
@@ -122,11 +122,7 @@ static void Device_Cmd_Process(DeviceParam_e param,uint32_t int_value,char *str_
 		case REFRIGERATIONMODE://示例 根据实际需要更改
 			if (str_value != NULL)
 			{
-				char txBuf[IOT_UART_TX_BUF_SIZE];
-				snprintf(txBuf, sizeof(txBuf), "AT+MQTTSEND=%s", str_value);
-				IOT_Lib_Send_ATCmd(txBuf);
-				s_paramValue[param].strValue = str_value;
-			  
+				IOT_Lib_Send_ATCmd("AT+MQTTSEND=%s", str_value);
 			}
 
 			
@@ -143,8 +139,9 @@ static void Device_Cmd_Process(DeviceParam_e param,uint32_t int_value,char *str_
  * @param   param: 设备属性枚举
  * @return  设备属性值
  * @brief   仅支持整型变量更新，字符型变量以变量地址传入，只要变量地址不变，就不需重新获取
+ *          禁止传给value.strValue赋值局部变量的地址，否则将导致数据丢失
  *******************************************************************************/
-static IOT_paramValue_u Device_ParamVlaue_Get(DeviceParam_e param)
+static IOT_paramValue_u Device_ParamValue_Get(DeviceParam_e param)
 {
 	IOT_paramValue_u value = {0};
 	static uint8_t test_value = 0;
@@ -261,8 +258,6 @@ static void JsonBuff_Begin(JsonBuilder_t *JsonBuff)
  *******************************************************************************/
 static void JsonBuff_End(JsonBuilder_t *JsonBuff)
 {
-	char txBuf[IOT_PKG_MAX_SIZE];
-
 	if (JsonBuff == NULL)
 	{
 		return;
@@ -280,21 +275,9 @@ static void JsonBuff_End(JsonBuilder_t *JsonBuff)
 
 	/* 计算 JSON 长度（从 '{' 到 '}' 的字节数） */
 	uint16_t jsonLen = JsonBuff->pos - JsonBuff->jsonStart; 
-
-	/* 将 MQTTSEND=%u, 头部拼接到 {json} 之前 */
-	 int ret = snprintf(txBuf, sizeof(txBuf), "MQTTSEND=%u,%s", jsonLen, JsonBuff->buf);
     
-    // 检查是否截断
-    if (ret < 0 || ret >= sizeof(txBuf)) 
-	{
-        // 处理错误：数据包太大，可能需要分包或丢弃
-        JsonBuff_Begin(JsonBuff);
-        return;
-    }
-	IOT_Lib_Send_ATCmd(txBuf);
+	IOT_Lib_Send_ATCmd("MQTTSEND=%u,%s", jsonLen, JsonBuff->buf);
 
-	/* 重置，开启新包 */
-	JsonBuff_Begin(JsonBuff);
 }
 
 /********************************************************************************
@@ -354,56 +337,58 @@ static void JsonBuff_AddStr(JsonBuilder_t *JsonBuff, const char *key, const char
  * @details 搜索 "key": 模式，跳过空格后解析十进制整数，
  *          支持正负数，不依赖第三方 JSON 库
  * @param   p: 属性值起始地址
- * @param   out:  输出整型值的存储地址
- * @return  bool: true=找到并解析成功  false=字段不存在或格式错误
- * @note    仅做简单线性搜索，不支持嵌套 JSON
+ * @param   e_param:  属性名称
+ * @return  0:解析失败，1:解析成功
+ * @note    解析成功后执行数据处理和上报执行结果
  *******************************************************************************/
-static bool Json_Get_Int_Value(const char *p, int32_t *out)
+static uint8_t Json_Int_Value_Deal(const char *p, DeviceParam_e e_param)
 {
-	if (p == NULL || out == NULL)
-        return false;
+	if (p == NULL )
+        return 0;
 
 	while (*p == ' ') 
 		p++;  /* 跳过空格 */
 
 	char *endPtr;
-    long val = strtol(p, &endPtr, 10);
+    int32_t val = strtol(p, &endPtr, 10);
 
     /* 检查是否解析到了任何数字 */
     if (endPtr == p) 
-        return false;
+        return 0;
 
-    *out = (int32_t)val;
-    return true;
+	Device_Cmd_Process(e_param, val, NULL);
+	return 1;
 }
 /********************************************************************************
  * @brief   从 JSON 字符串中提取字符串字段值
  * @details 搜索 "key":"  模式，提取两个双引号之间的内容，
  *          自动追加 '\0' 终止符
  * @param   p:   属性值起始地址
- * @param   outBuf: 输出字符串缓冲区
- * @param   bufLen: 缓冲区容量（含 '\0'）
- * @return  bool: true=找到并提取成功  false=字段不存在或值为空
+ * @param   e_param:  属性名称
+ * @return  0:解析失败，1:解析成功
  * @note    仅做简单线性搜索，不支持转义字符
  *******************************************************************************/
-static bool Json_Get_Str_Value(const char *p, char *outBuf, uint16_t bufLen)
+static uint8_t Json_Str_Value_Deal(const char *p, DeviceParam_e e_param)
 {
+	char outBuf[IOT_RX_CMD_MAX_SIZE];
 	uint16_t i = 0;
 
 	if (p == NULL || outBuf == NULL)
-        return false;
+        return 0;
 
 	p = strchr(p, '"');
 	if(p)
 	{	
 		p++; //跳过'"'，去获取实际参数
 	}
-	while (*p != '"' && *p != '\0' && i < bufLen - 1)
+	while (*p != '"' && *p != '\0' && (i < sizeof(outBuf) - 1))
 	{
 		outBuf[i++] = *p++;
 	}
 	outBuf[i] = '\0';
-	return (i > 0);
+
+	Device_Cmd_Process(e_param, 0, outBuf);
+	return 1;
 }
 
 /********************************************************************************
@@ -411,28 +396,31 @@ static bool Json_Get_Str_Value(const char *p, char *outBuf, uint16_t bufLen)
  * @details 搜索 "key":"  模式，提取两个双引号之间的内容，
  *          自动追加 '\0' 终止符
  * @param   p:   属性值起始地址
- * @param   outBuf: 输出字符串缓冲区
- * @param   bufLen: 缓冲区容量（含 '\0'）
- * @return  bool: true=找到并提取成功  false=字段不存在或值为空
+ * @param   e_param:  属性名称
+ * @return  0:解析失败，1:解析成功
  * @note    仅做简单线性搜索，不支持转义字符
  *******************************************************************************/
-static bool Json_Get_JSON_Value(const char *p, char *outBuf, uint16_t bufLen)
+static uint8_t Json_JSON_Value_Deal(const char *p, DeviceParam_e e_param)
 {
+	char outBuf[IOT_RX_CMD_MAX_SIZE];
 	uint16_t i = 0;
+
 	if (p == NULL || outBuf == NULL)
-        return false;
+        return 0;
 
 	p = strchr(p, '{');
 	if(p)
 	{	
 		p++; //跳过'{'，去获取实际参数
 	}
-	while (*p != '}' && *p != '\0' && i < bufLen - 1)
+	while (*p != '}' && *p != '\0' && i < sizeof(outBuf) - 1)
 	{
 		outBuf[i++] = *p++;
 	}
 	outBuf[i] = '\0';
-	return (i > 0);
+
+	Device_Cmd_Process(e_param, 0, outBuf);
+	return 1;
 }
 
 /* ========================= 云端指令处理 ========================= */
@@ -447,9 +435,7 @@ static bool Json_Get_JSON_Value(const char *p, char *outBuf, uint16_t bufLen)
  *******************************************************************************/
 static void IOT_MQTTRECV_Handle(const char *json)
 {
-	int32_t val;
 	const char *jsonStart = json;
-	char outBuf[IOT_SINGLE_INSTRUCTION_MAX_LEN];
 
 	if (json == NULL) 
 		return;
@@ -481,26 +467,17 @@ static void IOT_MQTTRECV_Handle(const char *json)
 		p += strlen(search);
 		if(e->type == IOT_ATTR_INT)
 		{
-			if (Json_Get_Int_Value(p, &val))
-			{
-				Device_Cmd_Process(e->e_param, val, NULL);
-				IOT_UserApp_InitiativeReport(e->e_param);             //主动上报该控制命令的执行结果；
-			}
+			Json_Int_Value_Deal(p, e->e_param);
+			IOT_UserApp_InitiativeReport(e->e_param);             //主动上报该控制命令的执行结果；
 		}
 		else if(e->type == IOT_ATTR_STR)
 		{
-			if (Json_Get_Str_Value(p, outBuf,sizeof(outBuf)))
-			{
-				Device_Cmd_Process(e->e_param, 0, outBuf);
-				IOT_UserApp_InitiativeReport(e->e_param);             //主动上报该控制命令的执行结果；
-			}
+			Json_Str_Value_Deal(p, e->e_param);
+			IOT_UserApp_InitiativeReport(e->e_param);             //主动上报该控制命令的执行结果；
 		}
 		else if(e->type == IOT_ATTR_JSON)
 		{
-			if (Json_Get_JSON_Value(p, outBuf,sizeof(outBuf)))
-			{
-				Device_Cmd_Process(e->e_param, 0, outBuf);
-			}
+			Json_JSON_Value_Deal(p, e->e_param);
 		}
 		
 		break;
@@ -530,10 +507,8 @@ static void FilterRegisrter(void)
 	for (uint8_t i = 0; i < FILTER_LIFE_CONFIG_COUNT; i++)
 	{
 		const FilterLifeConfig_t *cfg = &s_filterLifeConfig[i];
-		char txBuf[IOT_UART_TX_BUF_SIZE];
-		snprintf(txBuf, sizeof(txBuf), "FLTPROCESS=%s,%d,%s,%d,%s",
-				 cfg->jsonKey, cfg->x, cfg->fx, cfg->y, cfg->fy);
-		IOT_Lib_Send_ATCmd(txBuf);
+
+		IOT_Lib_Send_ATCmd("FLTPROCESS=%s,%d,%s,%d,%s",cfg->jsonKey, cfg->x, cfg->fx, cfg->y, cfg->fy);
 	}
 }
 /********************************************************************************
@@ -609,7 +584,7 @@ static void IOT_UserApp_ReportAll(void)
 		{
 			if (e->type == IOT_ATTR_STR || e->type == IOT_ATTR_JSON)
 			{
-				char *p_StrVal = Device_ParamVlaue_Get(e->e_param).strValue;
+				char *p_StrVal = Device_ParamValue_Get(e->e_param).strValue;
 				if(p_StrVal == NULL)
 					continue;
 				/* 16(AT+MQTTSEND=xxx,) + pos + e->key + e->p_StrVal + 7(":""}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
@@ -622,7 +597,7 @@ static void IOT_UserApp_ReportAll(void)
 			}
 			else
 			{
-				int32_t cur = Device_ParamVlaue_Get(e->e_param).intValue;
+				int32_t cur = Device_ParamValue_Get(e->e_param).intValue;
 				/* 16(AT+MQTTSEND=xxx,) + pos + e->key + cur + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
 				if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(cur) + 5) > IOT_PKG_MAX_SIZE)
 				{
@@ -669,7 +644,7 @@ static void IOT_UserApp_ReportDiff(void)
 		const IOT_AttrEntry_t *e = &s_attrTable[i];
 		if (e->type == IOT_ATTR_INT)
 		{
-			int32_t cur = Device_ParamVlaue_Get(e->e_param).intValue;
+			int32_t cur = Device_ParamValue_Get(e->e_param).intValue;
 			if (cur != s_paramValue[i].intValue)
 			{/* 16(AT+MQTTSEND=xxx,) + pos + e->key + cur + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
 				if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(cur) + 5) > IOT_PKG_MAX_SIZE)
@@ -713,7 +688,7 @@ void IOT_UserApp_InitiativeReport(DeviceParam_e param)
 
 	if (e->type == IOT_ATTR_STR || e->type == IOT_ATTR_JSON)
 	{
-		char *p_StrVal = s_paramValue[param].strValue;
+		const char *p_StrVal = s_paramValue[param].strValue;
 		if(p_StrVal == NULL)
 			return;
 		/* 16(AT+MQTTSEND=xxx,) + pos + e->key + e->p_StrVal + 7(":""}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
@@ -725,7 +700,7 @@ void IOT_UserApp_InitiativeReport(DeviceParam_e param)
 	}
 	else if (e->type == IOT_ATTR_INT)
 	{
-		uint32_t cur = Device_ParamVlaue_Get(e->e_param).intValue;
+		uint32_t cur = Device_ParamValue_Get(e->e_param).intValue;
 		/* 16(AT+MQTTSEND=xxx,) + pos + e->key + cur + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
 		if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(cur) + 5) > IOT_PKG_MAX_SIZE)
 		{
@@ -753,11 +728,8 @@ void IOT_UserApp_InitiativeReport(DeviceParam_e param)
  * @note    需要使用时调用
  *******************************************************************************/
 static void IOT_UserApp_CheckMCUOTA(void)
-{
-/* 单独上报 mcu version*/
-	char txBuf[IOT_UART_TX_BUF_SIZE];
-	snprintf(txBuf, sizeof(txBuf), "MCUOTACHECK=\"%s\"",app_mcu_Ver);
-	IOT_Lib_Send_ATCmd(txBuf);
+{/* 单独上报 mcu version*/
+	IOT_Lib_Send_ATCmd("MCUOTACHECK=\"%s\"",app_mcu_Ver);
 }
 
 /********************************************************************************
@@ -855,6 +827,7 @@ static void IOT_UserApp_UpdateFactoryResult(const char* para_buf)
 		s_FactoryResult = FACTORY_FAIL;
 	}
 }
+
 /********************************************************************************
  * @brief   IOT 事件统一处理回调
  * @details 由 iot_lib 层在解析到完整事件后调用，根据事件类型分发处理：
@@ -869,8 +842,6 @@ static void IOT_UserApp_UpdateFactoryResult(const char* para_buf)
  *******************************************************************************/
 static void IOT_Event_Handle(const IOT_Event_t *evt)
 {
-	char txBuf[IOT_UART_TX_BUF_SIZE];
-
 	switch (evt->e_type)
 	{
 		case IOT_EVT_AT_OK:
@@ -952,8 +923,7 @@ static void IOT_Event_Handle(const IOT_Event_t *evt)
 
 		case IOT_EVT_MCUOTA_DOWNLOAD_DONE:
 			/* MCU OTA 固件下载完成 */
-			snprintf(txBuf, sizeof(txBuf), "MCUOTASEND=%d",OTA_YMODEM_VALID_SIZE);
-			IOT_Lib_Send_ATCmd(txBuf);
+			IOT_Lib_Send_ATCmd("MCUOTASEND=%d",OTA_YMODEM_VALID_SIZE);
 			Mcu_Ota_Set_State(MCU_OTA_STATE_DOWNLOAD_DONE);
 			break;
 
@@ -979,9 +949,7 @@ static void IOT_Event_Handle(const IOT_Event_t *evt)
  *******************************************************************************/
 void IOT_GetNetTime(void)
 {
-	char txBuf[IOT_UART_TX_BUF_SIZE];
-	snprintf(txBuf, sizeof(txBuf), "GETTIME");
-	IOT_Lib_Send_ATCmd(txBuf);
+	IOT_Lib_Send_ATCmd("GETTIME");
 	memset(&s_NetTime, 0, sizeof(s_NetTime));
 }
 /********************************************************************************
@@ -1009,9 +977,7 @@ NetTime_t IOT_Return_NetTime(void)
  *******************************************************************************/
 void IOT_FactorTest(void)
 {
-	char txBuf[IOT_UART_TX_BUF_SIZE];
-	snprintf(txBuf, sizeof(txBuf), "FACTORYTEST");
-	IOT_Lib_Send_ATCmd(txBuf);
+	IOT_Lib_Send_ATCmd("FACTORYTEST");
 	s_FactoryResult = FACTORY_NULL;
 }
 

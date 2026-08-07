@@ -76,9 +76,8 @@ typedef enum
     /* MCU OTA 事件 */
     IOT_EVT_MCUOTA_VERSION,         /* +MCUOTAEVENT:VERSION,xxx */
     IOT_EVT_MCUOTA_DOWNLOAD_DONE,   /* +MCUOTAEVENT:DOWNLOAD,DONE */
-    IOT_EVT_MCUOTA_TRANSPORT_REBOOT,/* +MCUOTAEVENT:TRANSPORT,REBOOT */
+    IOT_EVT_MCUOTA_TRANSPORT_REBOOT /* +MCUOTAEVENT:TRANSPORT,REBOOT */
 
-    IOT_EVT_UNKNOWN,
 } IOT_EventType_e;
 
 /* ========================= AT 帧描述符表 ========================= */
@@ -134,7 +133,7 @@ void IOT_RX_Handle(void);
  * @param  cmd  不含 "AT+" 前缀和结束符的指令字符串，如 "SOFTSTART=2"
  *              上报 JSON 时传入 "MQTTSEND=<len>,<json>"
  */
-void IOT_Lib_Send_ATCmd(const char *cmd);
+void IOT_Lib_Send_ATCmd(const char *fmt, ...);
 
 /**
  * @brief  上报设备型号（上电必调）

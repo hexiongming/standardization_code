@@ -341,9 +341,7 @@ void Mcu_Ota_Init(void)
 void Mcu_Ota_Resume_Transmit(void) 
 {
 	/* 断电重传：发送 RESUME 指令 */
-	char txBuf[32];
-	snprintf(txBuf, sizeof(txBuf), "MCUOTARESUME=%d",OTA_YMODEM_VALID_SIZE);
-	IOT_Lib_Send_ATCmd(txBuf);
+	IOT_Lib_Send_ATCmd("MCUOTARESUME=%d",OTA_YMODEM_VALID_SIZE);
 	mcu_ota_data.e_mcu_ota_state = MCU_OTA_STATE_NEED_RESUME;
 }
 

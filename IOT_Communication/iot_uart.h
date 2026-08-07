@@ -30,6 +30,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 #include "uart_demo.h"				//硬件底层驱动头文件，按需求修改
 
@@ -54,7 +55,7 @@ typedef bool bool_t;
 #define IOT_UART_RX_QUEUE_SIZE		512U    /* 接收环形缓冲区大小（字节）*/
 #endif	
 
-#define IOT_RX_CMD_MAX_SIZE			128U	/* 接收WiFi下发的单条指令数据最大长度（字节）*/
+#define IOT_RX_CMD_MAX_SIZE			(IOT_UART_RX_QUEUE_SIZE/2)	/* 接收WiFi下发的单条指令数据最大长度（字节）*/
 
 #define IOT_UART_TX_BUF_SIZE        128U    /* 发送缓冲区大小（字节）*/
 #define IOT_UART_TX_BUF_NUM			5U		/* 发送队列最大缓存条目数,确保 ≥ 5 需预留足够缓冲，否则有可能会导致需要上报的数据被覆盖*/

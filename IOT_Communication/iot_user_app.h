@@ -14,7 +14,7 @@
  * 3、 修改 s_filterLifeConfig 和 s_filterResetConfig 滤芯的配置参数；如果没有滤芯功能，则 HAVE_FILTER 定义为0
  * 4、 由于差异上报不支持字符串比较，所以如有字符串参数变化后需要上报，需要主动调用 IOT_UserApp_InitiativeReport() 传入需要上报的属性符 主动上报
  * 5、 需要在 Device_Cmd_Process() 函数中实现APP指令下发的功能执行逻辑或变量赋值；
- * 6、 需要在 Device_ParamVlaue_Get() 函数中实现属性列表中的参数获取逻辑，返回获取到的参数值
+ * 6、 需要在 Device_ParamValue_Get() 函数中实现属性列表中的参数获取逻辑，返回获取到的参数值
  * 7、 属性表中储存的都是uint32_t 类型，,实际使用中请自行转换为实际参数类型
  * 
  * 本文件提供以下接口供外部调用：
@@ -46,7 +46,6 @@ extern "C" {
  * 单包总长度上限（字节），含完整 AT 帧：AT+MQTTSEND=<len>,<json>\r\n
  */
 #define IOT_PKG_MAX_SIZE        			IOT_UART_TX_BUF_SIZE    	/* 上报数据封包总长度上限（字节）*/
-#define IOT_SINGLE_INSTRUCTION_MAX_LEN		(IOT_UART_RX_QUEUE_SIZE/2)	/* 下发单个指令最大长度（字节）*/
 
 
 #define IOT_POLL_INTERVAL_MS        (10U)     							/* IOT_UserApp_Handle 调用周期（ms）*/
@@ -126,7 +125,7 @@ typedef struct
 
 typedef union 
 {
-	char                *strValue;	        /* 字符型数据地址*/
+	char                *strValue;	        /* 字符型数据地址,禁止传局部变量地址*/
 	int32_t              intValue;			/* 整型数据 */			
 } IOT_paramValue_u;
 

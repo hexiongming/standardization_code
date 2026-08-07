@@ -67,10 +67,10 @@ static const IOT_FrameEntry_t s_frameTable[] = {
  * @brief   WiFi模组下发的命令帧解析函数
  * @details 遍历 s_frameTable[]，对每条描述符按 matchType 做精确或前缀匹配，
  *          命中后设置事件类型，若描述符挂有 parser 则调用额外解析；
- *          parser 返回 false 时丢弃该帧（type 保持 IOT_EVT_UNKNOWN）。
+ *          parser 返回 false 时丢弃该帧（type 保持 IOT_EVT_NONE）。
  *          新增下行帧只需在 s_frameTable[] 末尾追加一行，本函数无需修改。
  * @param   line: 以 '\0' 结尾的原始行字符串
- * @param   evt:  输出事件结构体指针，未命中时 e_type=IOT_EVT_UNKNOWN
+ * @param   evt:  输出事件结构体指针，未命中时 e_type=IOT_EVT_NONE
  * @return  void
  * @note    空行时设置 e_type=IOT_EVT_NONE，不触发回调；
  *          同前缀条目的顺序决定优先级，前缀更长的须排在更前面
@@ -78,11 +78,10 @@ static const IOT_FrameEntry_t s_frameTable[] = {
 static void LineCmd_Parse(const char *line, IOT_Event_t *evt)
 {
 	memset(evt, 0, sizeof(IOT_Event_t));
-	evt->e_type = IOT_EVT_UNKNOWN;
+	evt->e_type = IOT_EVT_NONE;
 
 	if (line[0] == '\0')
 	{
-		evt->e_type = IOT_EVT_NONE;
 		return;
 	}
 
@@ -96,17 +95,36 @@ static void LineCmd_Parse(const char *line, IOT_Event_t *evt)
 		/* 命中：设置默认事件类型，若非全字匹配，则将剩余部分传入evt->json */
 		evt->e_type = e->evtType;
 
-		/* 若非全字匹配，则将剩余部分传入evt->json，并补结束符'\0' */
-		if(e->matchType == IOT_MATCH_EXACT)
-			return;
-		else
+		if(e->matchType != IOT_MATCH_EXACT)
 		{
+			/* 若非全字匹配，则将剩余部分传入evt->json，并补结束符'\0' */
 			const char *p = line + strlen(e->prefix);
 			strncpy(evt->para_buf, p, sizeof(evt->para_buf) - 1);
 			evt->para_buf[sizeof(evt->para_buf) - 1] = '\0';
 		}
 		return;
 	}
+}
+
+/********************************************************************************
+ * @brief   读取并解析原始指令
+ * @details 从接收队列中读取一条指令并解析
+ * @param   void
+ * @return  0： 无有效数据  1： 存在有效数据并解析成功
+ * @note    无完整行时立即返回，不阻塞
+ *******************************************************************************/
+static uint8_t IOT_Read_Parse_Instruction(IOT_Event_t *evt)
+{
+	uint8_t  s_lineBuf[IOT_RX_CMD_MAX_SIZE];			/* 接收单条指令缓冲区     */
+
+	/* 从接收环形队列中读取一帧AT指令数据*/
+	uint16_t len = IOT_UART_ReadLine(s_lineBuf, sizeof(s_lineBuf));
+	if (len == 0) 
+		return 0;
+
+	/* 匹配注册的AT 帧描述符表中的命令类型，并解析命令的有效字段 */
+	LineCmd_Parse((const char *)s_lineBuf, evt);
+	return 1;
 }
 
 /* ========================= 公共接口实现 ========================= */
@@ -133,21 +151,17 @@ void IOT_Lib_Init(IOT_EventCallback_t cb)
  *******************************************************************************/
 void IOT_RX_Handle(void)
 {
-	uint8_t  s_lineBuf[IOT_RX_CMD_MAX_SIZE];			/* 接收单条指令缓冲区     */
-	/* 从接收环形队列中读取一帧AT指令数据*/
-	uint16_t len = IOT_UART_ReadLine(s_lineBuf, sizeof(s_lineBuf));
-	if (len == 0) 
-		return;
-
-	/* 匹配注册的AT 帧描述符表中的命令类型，并解析命令的有效字段 */
 	IOT_Event_t evt;
-	LineCmd_Parse((const char *)s_lineBuf, &evt);
 
-	/* 通过 IOT_Event_Handle 回调函数，处理对应指令类型的执行动作 */
-	if (evt.e_type != IOT_EVT_NONE && s_eventCb != NULL)
+	if(IOT_Read_Parse_Instruction(&evt))
 	{
-		s_eventCb(&evt);
+		/* 通过 IOT_Event_Handle 回调函数，处理对应指令类型的执行动作 */
+		if (evt.e_type != IOT_EVT_NONE && s_eventCb != NULL)
+		{
+			s_eventCb(&evt);
+		}
 	}
+	
 }
 
 /********************************************************************************
@@ -157,16 +171,34 @@ void IOT_RX_Handle(void)
  * @param   cmd: 不含 "AT+" 前缀和结束符的指令字符串
  * @return  void
  *******************************************************************************/
-void IOT_Lib_Send_ATCmd(const char *cmd)
+// void IOT_Lib_Send_ATCmd(const char *cmd)
+// {
+// 	char tx_ATBuf[IOT_UART_TX_BUF_SIZE];
+// 	if (cmd == NULL)
+// 	{
+// 		return;
+// 	}
+// 	memset(tx_ATBuf, 0, sizeof(tx_ATBuf));
+// 	snprintf(tx_ATBuf, sizeof(tx_ATBuf), "AT+%s\r\n", cmd);
+// 	IOT_UART_TxEnQueue(tx_ATBuf);
+// }
+
+void IOT_Lib_Send_ATCmd(const char *fmt, ...)
 {
-	char tx_ATBuf[IOT_UART_TX_BUF_SIZE];
-	if (cmd == NULL)
-	{
-		return;
-	}
-	memset(tx_ATBuf, 0, sizeof(tx_ATBuf));
-	snprintf(tx_ATBuf, sizeof(tx_ATBuf), "AT+%s\r\n", cmd);
-	IOT_UART_TxEnQueue(tx_ATBuf);
+    char tx_ATBuf[IOT_UART_TX_BUF_SIZE];
+    va_list args;
+
+    if (fmt == NULL)
+        return;
+
+    va_start(args, fmt);
+
+    int len = snprintf(tx_ATBuf, sizeof(tx_ATBuf), "AT+");
+    vsnprintf(tx_ATBuf + len, sizeof(tx_ATBuf) - len, fmt, args);
+    strcat(tx_ATBuf, "\r\n");
+    va_end(args);
+
+    IOT_UART_TxEnQueue(tx_ATBuf);
 }
 
 /********************************************************************************
@@ -180,9 +212,7 @@ void IOT_Lib_Send_ATCmd(const char *cmd)
  *******************************************************************************/
 void IOT_Lib_ReportModelId(char *series, char *modelId)
 {
-	char txBuf[IOT_UART_TX_BUF_SIZE];
-	snprintf(txBuf, sizeof(txBuf), "MODELID=%s,%s", series, modelId);
-	IOT_Lib_Send_ATCmd(txBuf);
+	IOT_Lib_Send_ATCmd("MODELID=%s,%s", series, modelId);
 }
 
 /********************************************************************************
@@ -199,9 +229,7 @@ void IOT_Lib_ReportModelId(char *series, char *modelId)
  *******************************************************************************/
 static void IOT_Lib_SoftStartConfig(uint8_t mode)
 {
-	char txBuf[16];
-	snprintf(txBuf, sizeof(txBuf), "SOFTSTART=%u", mode);
-	IOT_Lib_Send_ATCmd(txBuf);
+	IOT_Lib_Send_ATCmd("SOFTSTART=%u", mode);
 }
 /********************************************************************************
  * @brief   WiFi 模组进入新蓝牙配网
