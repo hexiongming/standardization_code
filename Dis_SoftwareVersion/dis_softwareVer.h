@@ -156,6 +156,7 @@ uint8_t DisSoftwareVer_IsActive(void);
  * @return  len 版本号长度
  * @note    如测试阶段显示板版本号为13，则APP显示为0.1.3
  *          如正式阶段显示板版本号为103，则APP显示为1.10.3 		
+ *          若显示所有板子的版本号，则显示为0.A3.B13.C90.D359，或1.A3.B13.C90.D359
  *******************************************************************************/
 uint8_t Return_APPShowVer(char *buf, uint16_t buf_len,uint8_t dis_mode);
 
