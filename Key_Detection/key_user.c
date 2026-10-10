@@ -74,6 +74,7 @@ void Key_Action_Deal(KeyInfo_t info)
 		if((KEY_ICEWATER | KEY_WARMWATER) == info->id)
 		{
 			IOT_Lib_NewBleSet();
+			IOT_GetNetTime();
 			BuzzerSet(SingleNum, SoundSupLongSingle);
 			//´¦Àíº¯Êý	
 		}
