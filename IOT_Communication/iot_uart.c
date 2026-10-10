@@ -116,64 +116,31 @@ void IOT_UART_Init(void)
  * @return  void
  * @note    当前为阻塞发送，如需 DMA/中断发送，修改平台适配宏即可
  *******************************************************************************/
-/*
-typedef struct 
-{
-	uint8_t tXBusy;
-	uint16_t len;
-	volatile uint8_t *data;
-}UART_SEND_DATA_t;
-UART_SEND_DATA_t pData_Uart;
-*/
-static void IOT_UART_Send(uint8_t *data, uint16_t len)
+static uint8_t IOT_UART_Send(uint8_t *data, uint16_t len)
 {
 	if (data == NULL || len == 0) 
-		return;
-
+	{
+		return 0;
+	}
 	IOT_UART_PLATFORM_SEND(data, len);
-/*
-	pData_Uart.data = data;
-    pData_Uart.len = len;
-	pData_Uart.tXBusy = 1;
-	//置硬件串口发送中断标志位，进入中断发送数据
-*/
+	return 1;
 }
-/*
-//将要发送的数据传入硬件串口发送数据寄存器，返回剩余数据长度
-uint8_t uart_interrupt_send(uint8_t *data)
-{
-    UART_SEND_DATA_t *pFrame = &pData_Uart;
 
-    if (( pFrame->len > 0U) && pFrame->data != NULL)
-    {
-        *data = *pFrame->data;
-        pFrame->data++;
-        pFrame->len --;
-    }
-    else  //send finished
-    {
-		//IOT_TXSetIdle();
-		pData_Uart.tXBusy = 0;
-		s_iotTxQueue.head = (s_iotTxQueue.head + 1) % IOT_UART_TX_BUF_NUM;
-		s_iotTxQueue.count--;
-    }
-	return pFrame->len;
-}
-*/
 /********************************************************************************
  * @brief   将字符串压入发送队列
  * @details 拷贝完整 AT 帧字符串到队列槽位，队列满时静默丢弃
  * @param   str: 待入队的完整 AT 帧字符串，如 "AT+SOFTSTART=2\r\n"
+ * @param   len: 待入队字符串长度
  * @return  bool: true=入队成功  false=队列已满
  * @note    所有上层发送操作均通过此接口入队，统一由 IOT_TX_Handle 发出
  *******************************************************************************/
-bool IOT_UART_TxEnQueue(const char *str)
+bool IOT_UART_TxEnQueue(const char *str, uint16_t len)
 {
-	if (str == NULL || s_iotTxQueue.count >= IOT_UART_TX_BUF_NUM) 
+	if (str == NULL || s_iotTxQueue.count >= IOT_UART_TX_BUF_NUM || len > IOT_UART_TX_BUF_SIZE) 
 		return false;
 
-	strncpy(s_iotTxQueue.txbuf[s_iotTxQueue.tail], str, IOT_UART_TX_BUF_SIZE - 1);
-	s_iotTxQueue.txbuf[s_iotTxQueue.tail][IOT_UART_TX_BUF_SIZE - 1] = '\0';
+	strncpy(s_iotTxQueue.txbuf[s_iotTxQueue.tail], str, len);
+	s_iotTxQueue.txbuf[s_iotTxQueue.tail][len] = '\0';
 	s_iotTxQueue.tail = (s_iotTxQueue.tail + 1) % IOT_UART_TX_BUF_NUM;
 	s_iotTxQueue.count++;
 	return true;
@@ -233,23 +200,36 @@ uint8_t IOT_TXQueue_Size_Return(void)
  *          间隔未到时保留队头，下次调用再试，不丢失数据
  * @param   void
  * @return  void
- * @note    在 IOT_TX_Handle 中每次调用
+ * @note    在 10ms 的周期中轮询调用
  *******************************************************************************/
 void IOT_TX_Handle(void)
 {
+	static uint16_t s_txIntervalCounter  = 0;		/* 发送间隔计数器*/
 	/* 检查硬件是否正在发送，如果忙则直接返回 */
     if (s_TXBusy)
-        return;
-	if (s_iotTxQueue.count == 0) 
+	{
 		return;
-
-	IOT_UART_Send((uint8_t *)s_iotTxQueue.txbuf[s_iotTxQueue.head],
-				  (uint16_t)strlen(s_iotTxQueue.txbuf[s_iotTxQueue.head]));
-
-	IOT_TXSetBusy();
-	// s_iotTxQueue.head = (s_iotTxQueue.head + 1) % IOT_UART_TX_BUF_NUM;
-	// s_iotTxQueue.count--;
-	
+	}
+	else
+	{
+		if(s_txIntervalCounter < IOT_TX_INTERVAL_MS)
+			s_txIntervalCounter ++;
+		else
+		{
+			if (s_iotTxQueue.count == 0)
+				return;
+			if(IOT_UART_Send((uint8_t *)s_iotTxQueue.txbuf[s_iotTxQueue.head],
+				  		  (uint16_t)strlen(s_iotTxQueue.txbuf[s_iotTxQueue.head])))
+			{
+				IOT_TXSetBusy();
+				s_txIntervalCounter = 0;
+			}
+			else
+			{
+				IOT_TXSetIdle();
+			}
+		}
+	}
 }
 
 /*******************************************************************************

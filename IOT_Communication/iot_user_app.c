@@ -21,20 +21,23 @@
 
 
 /* ========================= 私有变量 ========================= */
-static uint32_t s_DiffReportCounter      = 0;	/* 差异属性上报间隔计数器*/
-static uint32_t s_fullReportCounter  = 0;		/* 全属性上报间隔计数器*/
-static uint16_t s_bootCounter        = 0;		/* 上电延迟计数器*/
-static uint16_t s_txIntervalCounter  = 0;		/* 发送间隔计数器*/
-static uint16_t s_McuOtaCounter  = 0;			/* mcu ota时间计数器*/
-static uint16_t s_AllReportFlag     = 0;		/* 全属性上报标志*/
-static NetTime_t s_NetTime;						/* 网络时间*/
-static FactoryResult_t s_FactoryResult;			/* 产测结果*/
-static NetWorkStatus_t s_NetStatus = NET_STATUS_OFFLINE;	/* 网络状态*/
-static char app_mcu_Ver[32];					/* MCU 在APP显示的版本信息*/	
+static uint32_t s_DiffReportCounter      = 0;   /* 差异属性上报间隔计数器*/
+static uint32_t s_fullReportCounter  = 0;       /* 全属性上报间隔计数器*/
+static uint16_t s_bootCounter        = 0;       /* 上电延迟计数器*/
+static uint16_t s_CheckExistCounter  = 0;       /* 检测WiFi模块存在计数器*/
+static uint8_t s_CheckExistNumber  = 0;	        /* 检测WiFi模块存在计数器*/
+
+static uint16_t s_McuOtaCounter  = 0;           /* mcu ota时间计数器*/
+static uint16_t s_AllReportFlag     = 0;        /* 全属性上报标志*/
+static NetTime_t s_NetTime;                     /* 网络时间*/
+static FactoryResult_e s_FactoryResult;         /* 产测结果*/
+static NetWorkStatus_e s_NetStatus = NET_STATUS_OFFLINE;                 /* 网络状态*/
+static NetWork_Config_Status_e s_NetWorkConfigStatus = NET_CONFIG_NULL;  /* 配网状态*/
+static RouterStatus_t s_RouterStatus = ROUTER_STATUS_NULL;               /* 连接路由器状态*/
+static char app_mcu_Ver[32];                                             /* MCU 在APP显示的版本信息*/	
 /* -----------------------------------------------------------------------
  * 外部变量声明或定义，若已在外部文件定义和声明，则包含头文件
  * ----------------------------------------------------------------------- */
-
 char g_mcu_Manufacturer[32]="Philips";
 char g_device_Series[32] = "MargaritaIOT";
 char g_device_ModelID[32] = "Margarita01"; 
@@ -47,7 +50,7 @@ char g_iot_ErrorCode[5] = "E00";
  *   { "JsonKey", param, IOT_ATTR_INT, false, true, NULL }  — 只读只上报
  *   { "JsonKey", param, IOT_ATTR_INT, true,  true,  NULL }  — 可读写
  *   { "JsonKey", param, IOT_ATTR_INT, true,  true, CallBack_xxx } — 可读写+回调
- * 只支持常量的字符串类型，如果需上报可变字符串，请单独实现上报函数，如 IOT_UserApp_ReportErrorCode();
+ * 只支持常量的字符串类型，如果需上报可变字符串，请单独实现上报函数;
  * ----------------------------------------------------------------------- */
 static const IOT_AttrEntry_t s_attrTable[]=
 {
@@ -71,28 +74,67 @@ static const IOT_AttrEntry_t s_attrTable[]=
 	{"RefrigerationMode",    REFRIGERATIONMODE,       IOT_ATTR_STR,    true,       true,      },
 	{"MAXFilterReset",       MAXFILTERRESET,          IOT_ATTR_INT,    true,       false,     },
 	{"PC5in1FilterReset",    PC5IN1FILTERRESET,       IOT_ATTR_INT,    true,       false,     },
+	{"NightModeSet",         NIGHTMODE0,              IOT_ATTR_INT,    true,       false,     },
+	{"NightModeRepeatWeek",  NIGHTMODE1,              IOT_ATTR_STR,    true,       false,     },
+	{"NightModeStartHour",   NIGHTMODE2,              IOT_ATTR_INT,    true,       false,     },
+	{"NightModeEndHour",     NIGHTMODE3,              IOT_ATTR_INT,    true,       false,     },
+	{"NightModeStartMinute", NIGHTMODE4,              IOT_ATTR_INT,    true,       false,     },
+	{"NightModeEndMinute",   NIGHTMODE5,              IOT_ATTR_INT,    true,       false,     },
+	{"NightModeNoProduce",   NIGHTMODE6,              IOT_ATTR_INT,    true,       false,     },
+	{"NightModeNoCooling",   NIGHTMODE7,              IOT_ATTR_INT,    true,       false,     },
+	{"NightModeOpenLight",   NIGHTMODE8,              IOT_ATTR_INT,    true,       false,     },
+	{"NightModeNoSound",     NIGHTMODE9,              IOT_ATTR_INT,    true,       false,     },
 
 	{"aiPlan",               AIPLAN,                  IOT_ATTR_JSON,   true,       false,     },
 
 	{"ErrorCode",            ERRORCODE,               IOT_ATTR_STR,    false,      false,     },
 	{"Warning",              WARNING,                 IOT_ATTR_INT,    false,      false,     },
+
+	{"IceCubeKanban",       ICECUBEKANBAN,            IOT_ATTR_ARRAY,  true,       false,     },
+
 	
 	/*END----新增字段在此行之前追加----*/
 };
 #define ATTR_TABLE_SIZE  (sizeof(s_attrTable) / sizeof(s_attrTable[0]))
-
 static IOT_paramValue_u s_paramValue[ATTR_TABLE_SIZE] = {0};
+/*
+ * 下发指令的属性值为json格式的属性表
+ */
+typedef enum
+{
+	NONE,
+    VERSION, 
+	COUNT,   
+	COMMANDS,
+} Cmd_JsonParam_e;
+
+static const IOT_AttrEntry_t s_AIplanTable[]=
+{
+	//jsonkey,        param,          type,              write,    allReport   
+	{"version",      VERSION,         IOT_ATTR_STR,      true,      true,      },
+	{"count",        COUNT,           IOT_ATTR_INT,      true,      true,      },
+	{"commands",     COMMANDS,        IOT_ATTR_ARRAY,    true,      true,      },
+};
+#define JSON_ATTR_SIZE  (sizeof(s_AIplanTable) / sizeof(s_AIplanTable[0]))
+static IOT_paramValue_u s_AIPlanParamValue[JSON_ATTR_SIZE] = {0};
+
+static const  IOT_Json_Attr_t s_jsonTable[]=
+{//如有其它JSON格式的属性值，在末尾继续追加
+	{AIPLAN,     s_AIplanTable,    JSON_ATTR_SIZE,    s_AIPlanParamValue},
+};
+#define JSON_TABLE_SIZE  (sizeof(s_jsonTable) / sizeof(s_jsonTable[0]))
 
 /********************************************************************************
  * @brief   APP下发的设备指令数据功能执行操作函数
  * @details 针对所有属性命令进行下发的命令执行
  * @param   param: 下发的设备属性枚举
+ * @param   JsonParam: 下发的设备JSON格式属性的下层枚举
  * @param   int_value: 下发命令整型数据值
- * @param   str_value: 下发命令字符型/json数据值
+ * @param   point_value: 下发命令字符型/json数据值
  * @return  void
  * @brief   兼容整型和字符型命令的解析，根据实际数据类型进行应用和修改
  *******************************************************************************/
-static void Device_Cmd_Process(DeviceParam_e param, int32_t int_value, char *str_value)
+static void Device_Cmd_Process(uint8_t param, uint8_t JsonParam, int32_t int_value, const char *point_value)
 {
 	switch (param)
 	{
@@ -115,18 +157,64 @@ static void Device_Cmd_Process(DeviceParam_e param, int32_t int_value, char *str
 			/* code */
 			break;
 
-		case HOTWATERSET:
-			/* code */
+		case ICECUBEKANBAN:
+			IOT_Lib_Send_ATCmd("IceCubeKanban=%s", point_value);
+			IOT_UserApp_ActiveReport(ICECUBEKANBAN);
 			break;	
 			
 		case REFRIGERATIONMODE://示例 根据实际需要更改
-			if (str_value != NULL)
+			if (point_value != NULL)
 			{
-				IOT_Lib_Send_ATCmd("AT+MQTTSEND=%s", str_value);
+				IOT_Lib_Send_ATCmd("AT+MQTTSEND=%s", point_value);
 			}
+			break;
+		case AIPLAN:			//属性值为JSON格式的命令往下层继续解析得到的属性值
+			if (VERSION == JsonParam)
+			{
+				IOT_Lib_Send_ATCmd("version=%s", point_value);
+			}
+			else if (COUNT == JsonParam)
+			{
+				IOT_Lib_Send_ATCmd("count=%d", int_value);
+			}
+			else if (COMMANDS == JsonParam)
+			{
+				IOT_Lib_Send_ATCmd("commands=%s", point_value);
+			}
+			IOT_UserApp_ActiveReport(AIPLAN);
+			break;
 
-			
+		case NIGHTMODE0:
+			IOT_Lib_Send_ATCmd("NIGHTMODE0");
+			break;
+		case NIGHTMODE1:
+			IOT_Lib_Send_ATCmd("NIGHTMODE1");
+			break;
+		case NIGHTMODE2:
+			IOT_Lib_Send_ATCmd("NIGHTMODE2");
+			break;
+		case NIGHTMODE3:
+			IOT_Lib_Send_ATCmd("NIGHTMODE3");
+			break;
+		case NIGHTMODE4:
+			IOT_Lib_Send_ATCmd("NIGHTMODE4");
+			break;
+		case NIGHTMODE5:
+			IOT_Lib_Send_ATCmd("NIGHTMODE5");
+			break;
+		case NIGHTMODE6:
+			IOT_Lib_Send_ATCmd("NIGHTMODE6");
+			break;
+		case NIGHTMODE7:
+			IOT_Lib_Send_ATCmd("NIGHTMODE7");
+			break;
+		case NIGHTMODE8:
+			IOT_Lib_Send_ATCmd("NIGHTMODE8");
 			break;	
+		case NIGHTMODE9:
+			IOT_Lib_Send_ATCmd("NIGHTMODE9");
+			break;			
+			
 
 		default:
 			break;
@@ -141,7 +229,7 @@ static void Device_Cmd_Process(DeviceParam_e param, int32_t int_value, char *str
  * @brief   仅支持整型变量更新，字符型变量以变量地址传入，只要变量地址不变，就不需重新获取
  *          禁止传给value.strValue赋值局部变量的地址，否则将导致数据丢失
  *******************************************************************************/
-static IOT_paramValue_u Device_ParamValue_Get(DeviceParam_e param)
+static IOT_paramValue_u Device_ParamValue_Get(uint8_t param, uint8_t jsonParam)
 {
 	IOT_paramValue_u value = {0};
 	static uint8_t test_value = 0;
@@ -175,6 +263,24 @@ static IOT_paramValue_u Device_ParamValue_Get(DeviceParam_e param)
 		case ERRORCODE://示例 根据实际需要更改
 			value.strValue = g_iot_ErrorCode;
 			break;
+
+		case ICECUBEKANBAN:		//示例 数组变量
+			value.strValue = "[[0,0,0,1,3,7,0,0,60,1],[1,0,0,2,3,20,0,3,0,0],[1,1,0,2,2,20,30,0,0,1],[1,0,0,2,3,20,0,3,0,0]]";
+			break;
+
+		case AIPLAN:			//属性值为JSON格式的命令往下层继续解析得到的属性值
+			if (VERSION == jsonParam)
+			{
+				value.strValue = "2025652256500025";
+			}
+			else if (COUNT == jsonParam)
+			{
+				value.intValue = 5;
+			}
+			else if (COMMANDS == jsonParam)
+			{
+				value.strValue = "[1,\"0000254568845\",0,2]";
+			}
 
 		default:
 			break;
@@ -223,6 +329,8 @@ static const FilterResetConfig_t s_filterResetConfig[] = {
 #endif
 
 /**************************************************** 以下无需/禁止修改 *******************************************************/
+
+/* ========================= JSON 构造工具 ========================= */
 
 /********************************************************************************
  * @brief   初始化 JSON 构建器，
@@ -291,7 +399,7 @@ static void JsonBuff_End(JsonBuilder_t *JsonBuff)
  *******************************************************************************/
 static void JsonBuff_AddInt(JsonBuilder_t *JsonBuff, const char *key, int32_t val)
 {
-	char tmp[64];
+	char tmp[IOT_PKG_MAX_SIZE];
 
 	if (JsonBuff == NULL || key == NULL)
 	{
@@ -315,7 +423,7 @@ static void JsonBuff_AddInt(JsonBuilder_t *JsonBuff, const char *key, int32_t va
  *******************************************************************************/
 static void JsonBuff_AddStr(JsonBuilder_t *JsonBuff, const char *key, const char *val)
 {
-	char tmp[64];
+	char tmp[IOT_PKG_MAX_SIZE];
 
 	if (JsonBuff == NULL || key == NULL)
 	{
@@ -330,6 +438,29 @@ static void JsonBuff_AddStr(JsonBuilder_t *JsonBuff, const char *key, const char
 	JsonBuff->hasField = true;
 }
 
+/********************************************************************************
+ * @brief   向 JSON 构建器追加数组型字段
+ * @param   JsonBuff: JSON 构建器指针
+ * @param   key: JSON 字段名
+ * @param   val: 数组值,若是二维数组，需包含最外层的[],如[[1,0,"000221125000",0],[1,0,"000221125000",0]]
+ * @return  void
+ *******************************************************************************/
+static void JsonBuff_AddArray(JsonBuilder_t *JsonBuff, const char *key, const char *val)
+{
+	char tmp[IOT_PKG_MAX_SIZE];
+
+	if (JsonBuff == NULL || key == NULL)
+	{
+		return;
+	}
+
+	int n = snprintf(tmp, sizeof(tmp), "%s\"%s\":%s",
+					 JsonBuff->hasField ? "," : "", key, val);
+
+	memcpy(JsonBuff->buf + JsonBuff->pos, tmp, n);
+	JsonBuff->pos += n;
+	JsonBuff->hasField = true;
+}
 /* ========================= JSON 解析工具 ========================= */
 
 /********************************************************************************
@@ -341,7 +472,7 @@ static void JsonBuff_AddStr(JsonBuilder_t *JsonBuff, const char *key, const char
  * @return  0:解析失败，1:解析成功
  * @note    解析成功后执行数据处理和上报执行结果
  *******************************************************************************/
-static uint8_t Json_Int_Value_Deal(const char *p, DeviceParam_e e_param)
+static uint8_t Json_Int_Value_Deal(const char *p, uint8_t e_param, Cmd_JsonParam_e JsonParam)
 {
 	if (p == NULL )
         return 0;
@@ -356,7 +487,7 @@ static uint8_t Json_Int_Value_Deal(const char *p, DeviceParam_e e_param)
     if (endPtr == p) 
         return 0;
 
-	Device_Cmd_Process(e_param, val, NULL);
+	Device_Cmd_Process(e_param, JsonParam, val, NULL);
 	return 1;
 }
 /********************************************************************************
@@ -368,7 +499,7 @@ static uint8_t Json_Int_Value_Deal(const char *p, DeviceParam_e e_param)
  * @return  0:解析失败，1:解析成功
  * @note    仅做简单线性搜索，不支持转义字符
  *******************************************************************************/
-static uint8_t Json_Str_Value_Deal(const char *p, DeviceParam_e e_param)
+static uint8_t Json_Str_Value_Deal(const char *p, uint8_t e_param, Cmd_JsonParam_e JsonParam)
 {
 	char outBuf[IOT_RX_CMD_MAX_SIZE];
 	uint16_t i = 0;
@@ -387,7 +518,36 @@ static uint8_t Json_Str_Value_Deal(const char *p, DeviceParam_e e_param)
 	}
 	outBuf[i] = '\0';
 
-	Device_Cmd_Process(e_param, 0, outBuf);
+	Device_Cmd_Process(e_param, JsonParam, 0, outBuf);
+	return 1;
+}
+
+/********************************************************************************
+ * @brief   从 JSON 字符串中提取数组型字段值
+ * @details 搜索 "key":"  模式，提取两个双引号之间的内容，
+ *          自动追加 '\0' 终止符
+ * @param   p:   属性值起始地址
+ * @param   e_param:  属性名称
+ * @return  0:解析失败，1:解析成功
+ * @note    仅做简单线性搜索，不支持转义字符
+ *******************************************************************************/
+static uint8_t Json_Array_Value_Deal(const char *p, uint8_t e_param, Cmd_JsonParam_e JsonParam)
+{
+	char outBuf[IOT_RX_CMD_MAX_SIZE];
+	uint16_t i = 0;
+
+	if (p == NULL || outBuf == NULL)
+        return 0;
+
+	p = strchr(p, '[');
+
+	while (*p != '}' && *p != '\0' && (i < sizeof(outBuf) - 1))
+	{
+		outBuf[i++] = *p++;
+	}
+	outBuf[i] = '\0';
+
+	Device_Cmd_Process(e_param, JsonParam, 0, outBuf);
 	return 1;
 }
 
@@ -400,26 +560,60 @@ static uint8_t Json_Str_Value_Deal(const char *p, DeviceParam_e e_param)
  * @return  0:解析失败，1:解析成功
  * @note    仅做简单线性搜索，不支持转义字符
  *******************************************************************************/
-static uint8_t Json_JSON_Value_Deal(const char *p, DeviceParam_e e_param)
+static uint8_t Json_JSON_Value_Deal(const char *p, uint8_t e_param)
 {
-	char outBuf[IOT_RX_CMD_MAX_SIZE];
-	uint16_t i = 0;
+	const char *json = p;
+	const char *jsonStart;
 
-	if (p == NULL || outBuf == NULL)
+	if (json == NULL)
         return 0;
 
-	p = strchr(p, '{');
-	if(p)
+	p = strchr(json, '{');
+	if(json)
 	{	
-		p++; //跳过'{'，去获取实际参数
+		json++; //跳过'{'，去获取实际参数
 	}
-	while (*p != '}' && *p != '\0' && i < sizeof(outBuf) - 1)
-	{
-		outBuf[i++] = *p++;
-	}
-	outBuf[i] = '\0';
 
-	Device_Cmd_Process(e_param, 0, outBuf);
+	jsonStart = json;
+	for (uint8_t i = 0; i < JSON_TABLE_SIZE; i++)
+	{
+		const IOT_Json_Attr_t *json_attr = &s_jsonTable[i];
+
+		if (e_param == json_attr->param)
+		{
+			const IOT_AttrEntry_t *attr_array = &json_attr->json_attr[i];
+			for (uint8_t n = 0; n < json_attr->json_attr_count; n++)
+			{
+				char search[64];
+				const IOT_AttrEntry_t *e = &attr_array[n];
+				
+
+				snprintf(search, sizeof(search), "\"%s\":", e->key);
+				const char *p = strstr(jsonStart, search);					//下发指令与属性表key值比较，相同则继续，不同则比较下一个
+				if (p == NULL) 
+					continue;
+
+				if (!e->write_enable) 
+					continue;
+				
+				p += strlen(search);
+				if(e->type == IOT_ATTR_INT)
+				{
+					Json_Int_Value_Deal(p, e_param, (Cmd_JsonParam_e)e->param);
+				}
+				else if(e->type == IOT_ATTR_STR)
+				{
+					Json_Str_Value_Deal(p, e_param, (Cmd_JsonParam_e)e->param);
+				}
+				else if(e->type == IOT_ATTR_ARRAY)
+				{
+					Json_Array_Value_Deal(p, e_param, (Cmd_JsonParam_e)e->param);
+				}
+
+				jsonStart = p;
+			}
+		}
+	}
 	return 1;
 }
 
@@ -451,11 +645,19 @@ static void IOT_MQTTRECV_Handle(const char *json)
 		jsonStart = endPtr + 1; // 指向真正的 JSON 起始位置 '{'
 	}
 
+	int cmd_count = 0;			//计算下发的一条json中包含多少条指令
+    const char *pt = jsonStart;
+    while ((pt = strchr(pt, ':')) != NULL)
+    {
+        cmd_count++;
+        pt++;    // 跳过当前找到的冒号，向后继续搜索
+    }
+
 	for (uint16_t i = 0; i < ATTR_TABLE_SIZE; i++)
 	{
 		char search[64];
 		const IOT_AttrEntry_t *e = &s_attrTable[i];
-
+		
 		snprintf(search, sizeof(search), "\"%s\":", e->key);
 		const char *p = strstr(jsonStart, search);					//下发指令与属性表key值比较，相同则继续，不同则比较下一个
 		if (p == NULL) 
@@ -465,22 +667,30 @@ static void IOT_MQTTRECV_Handle(const char *json)
 			continue;
 
 		p += strlen(search);
+		cmd_count--;		//命中后剩余命令数-1
 		if(e->type == IOT_ATTR_INT)
 		{
-			Json_Int_Value_Deal(p, e->e_param);
-			IOT_UserApp_InitiativeReport(e->e_param);             //主动上报该控制命令的执行结果；
+			Json_Int_Value_Deal(p, e->param, NONE);
+			//IOT_UserApp_ActiveReport(e->param);             //主动上报该控制命令的执行结果；
 		}
 		else if(e->type == IOT_ATTR_STR)
 		{
-			Json_Str_Value_Deal(p, e->e_param);
-			IOT_UserApp_InitiativeReport(e->e_param);             //主动上报该控制命令的执行结果；
+			Json_Str_Value_Deal(p, e->param, NONE);
+			//IOT_UserApp_ActiveReport(e->param);             //主动上报该控制命令的执行结果；
 		}
 		else if(e->type == IOT_ATTR_JSON)
 		{
-			Json_JSON_Value_Deal(p, e->e_param);
+			Json_JSON_Value_Deal(p, e->param);
+		}
+		else if(e->type == IOT_ATTR_ARRAY)
+		{
+			Json_Array_Value_Deal(p, e->param, (Cmd_JsonParam_e)e->param);
 		}
 		
-		break;
+		if(0 == cmd_count) //已解析完最后一条指令
+			break;
+		else
+			jsonStart = p;
 	}
 }
 
@@ -582,22 +792,25 @@ static void IOT_UserApp_ReportAll(void)
 		const IOT_AttrEntry_t *e = &s_attrTable[i];
 		if(e->allReport_enable)
 		{
-			if (e->type == IOT_ATTR_STR || e->type == IOT_ATTR_JSON)
+			if ((e->type == IOT_ATTR_STR) || (e->type == IOT_ATTR_ARRAY))
 			{
-				char *p_StrVal = Device_ParamValue_Get(e->e_param).strValue;
+				char *p_StrVal = Device_ParamValue_Get(e->param, NONE).strValue;
 				if(p_StrVal == NULL)
+				{
+					s_reportIndex = i + 1;
 					continue;
+				}
 				/* 16(AT+MQTTSEND=xxx,) + pos + e->key + e->p_StrVal + 7(":""}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
 				if ((16 + JsonBuff.pos + strlen(e->key) + strlen((char *)p_StrVal) + 7) > IOT_PKG_MAX_SIZE)
 				{
 					break;
 				}
 				JsonBuff_AddStr(&JsonBuff, e->key, (const char *)p_StrVal);
-				s_paramValue[i].strValue = p_StrVal;
+				//s_paramValue[i].strValue = p_StrVal;
 			}
-			else
+			else if (e->type == IOT_ATTR_INT)
 			{
-				int32_t cur = Device_ParamValue_Get(e->e_param).intValue;
+				int32_t cur = Device_ParamValue_Get(e->param, NONE).intValue;
 				/* 16(AT+MQTTSEND=xxx,) + pos + e->key + cur + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
 				if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(cur) + 5) > IOT_PKG_MAX_SIZE)
 				{
@@ -605,6 +818,11 @@ static void IOT_UserApp_ReportAll(void)
 				}
 				JsonBuff_AddInt(&JsonBuff, e->key, cur);
 				s_paramValue[i].intValue = cur;
+			}
+			else
+			{
+				s_reportIndex = i + 1;
+				continue;
 			}
 		}
 		s_reportIndex = i + 1;
@@ -644,7 +862,7 @@ static void IOT_UserApp_ReportDiff(void)
 		const IOT_AttrEntry_t *e = &s_attrTable[i];
 		if (e->type == IOT_ATTR_INT)
 		{
-			int32_t cur = Device_ParamValue_Get(e->e_param).intValue;
+			int32_t cur = Device_ParamValue_Get(e->param, NONE).intValue;
 			if (cur != s_paramValue[i].intValue)
 			{/* 16(AT+MQTTSEND=xxx,) + pos + e->key + cur + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
 				if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(cur) + 5) > IOT_PKG_MAX_SIZE)
@@ -679,16 +897,16 @@ static void IOT_UserApp_ReportDiff(void)
  * @return  void
  * @note    需要主动上报某个属性的时候调用，每次只能上报一个属性
  *******************************************************************************/
-void IOT_UserApp_InitiativeReport(DeviceParam_e param)
+void IOT_UserApp_ActiveReport(uint8_t param)
 {
 	JsonBuilder_t JsonBuff;
 	JsonBuff_Begin(&JsonBuff);
 
 	const IOT_AttrEntry_t *e = &s_attrTable[param];
 
-	if (e->type == IOT_ATTR_STR || e->type == IOT_ATTR_JSON)
+	if (e->type == IOT_ATTR_STR || e->type == IOT_ATTR_ARRAY)
 	{
-		const char *p_StrVal = s_paramValue[param].strValue;
+		const char *p_StrVal = Device_ParamValue_Get(e->param, NONE).strValue;
 		if(p_StrVal == NULL)
 			return;
 		/* 16(AT+MQTTSEND=xxx,) + pos + e->key + e->p_StrVal + 7(":""}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
@@ -696,11 +914,19 @@ void IOT_UserApp_InitiativeReport(DeviceParam_e param)
 		{
 			return;
 		}
-		JsonBuff_AddStr(&JsonBuff, e->key, (const char *)p_StrVal);
+		if(e->type == IOT_ATTR_STR)
+		{	
+			JsonBuff_AddStr(&JsonBuff, e->key, (const char *)p_StrVal);
+		}
+		else if(e->type == IOT_ATTR_ARRAY)
+		{
+			JsonBuff_AddArray(&JsonBuff, e->key, (const char *)p_StrVal);
+		}
+		
 	}
 	else if (e->type == IOT_ATTR_INT)
 	{
-		uint32_t cur = Device_ParamValue_Get(e->e_param).intValue;
+		uint32_t cur = Device_ParamValue_Get(e->param, NONE).intValue;
 		/* 16(AT+MQTTSEND=xxx,) + pos + e->key + cur + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
 		if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(cur) + 5) > IOT_PKG_MAX_SIZE)
 		{
@@ -708,6 +934,60 @@ void IOT_UserApp_InitiativeReport(DeviceParam_e param)
 		}
 		JsonBuff_AddInt(&JsonBuff, e->key, cur);
 		s_paramValue[param].intValue = cur;
+	}
+	else if (e->type == IOT_ATTR_JSON)
+	{
+		char tmp[128];
+		int n = snprintf(tmp, sizeof(tmp), "\"%s\":{", e->key);
+
+		memcpy(JsonBuff.buf + JsonBuff.pos, tmp, n);
+		JsonBuff.pos += n;
+
+		for (uint8_t i = 0; i < JSON_TABLE_SIZE; i++)
+		{
+			const IOT_Json_Attr_t *json_attr = &s_jsonTable[i];
+			if (param == json_attr->param)
+			{
+				const IOT_AttrEntry_t *attr_array = &json_attr->json_attr[i];
+				for (uint8_t n = 0; n < json_attr->json_attr_count; n++)
+				{
+					const IOT_AttrEntry_t *e = &attr_array[n];
+					if(e->allReport_enable)
+					{
+						if (e->type == IOT_ATTR_STR || e->type == IOT_ATTR_ARRAY)
+						{
+							char *p_StrVal = Device_ParamValue_Get(json_attr->param,e->param).strValue;
+							if(p_StrVal == NULL)
+								continue;
+							/* 16(AT+MQTTSEND=xxx,) + pos + e->key + e->p_StrVal + 7(":""}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
+							if ((16 + JsonBuff.pos + strlen(e->key) + strlen((char *)p_StrVal) + 7) > IOT_PKG_MAX_SIZE)
+							{
+								break;
+							}
+							if(e->type == IOT_ATTR_STR)
+							{	
+								JsonBuff_AddStr(&JsonBuff, e->key, (const char *)p_StrVal);
+							}
+							else if(e->type == IOT_ATTR_ARRAY)
+							{
+								JsonBuff_AddArray(&JsonBuff, e->key, (const char *)p_StrVal);
+							}
+						}
+						else if(e->type == IOT_ATTR_INT)
+						{
+							int32_t cur = Device_ParamValue_Get(json_attr->param,e->param).intValue;
+							/* 16(AT+MQTTSEND=xxx,) + pos + e->key + cur + 5(":}\0\r\n") 是否超过总帧上限，如果超过，则立即闭合当前帧入队，此次处理的数据放到下一包 */
+							if ((16 + JsonBuff.pos + strlen(e->key) + sizeof(cur) + 5) > IOT_PKG_MAX_SIZE)
+							{
+								break;
+							}
+							JsonBuff_AddInt(&JsonBuff, e->key, cur);
+							s_paramValue[i].intValue = cur;
+						}
+					}
+				}
+			}
+		}
 	}
 	else
 	{
@@ -729,7 +1009,7 @@ void IOT_UserApp_InitiativeReport(DeviceParam_e param)
  *******************************************************************************/
 static void IOT_UserApp_CheckMCUOTA(void)
 {/* 单独上报 mcu version*/
-	IOT_Lib_Send_ATCmd("MCUOTACHECK=\"%s\"",app_mcu_Ver);
+	IOT_Lib_Send_ATCmd("MCUOTACHECK=%s",app_mcu_Ver);
 }
 
 /********************************************************************************
@@ -828,6 +1108,13 @@ static void IOT_UserApp_UpdateFactoryResult(const char* para_buf)
 	}
 }
 
+void Mcu_OtaSetFlag_Reboot (void)
+{
+	//写flash/eeprom 的ota标志
+	//重启进boot进行ymodem协议传输固件
+	//在重启进入boot后将 mcu_ota_data.e_mcu_ota_state = MCU_OTA_STATE_DOWNLOAD_DONE; ,再调用 Mcu_Ota_Ymodem_Handle();
+}
+
 /********************************************************************************
  * @brief   IOT 事件统一处理回调
  * @details 由 iot_lib 层在解析到完整事件后调用，根据事件类型分发处理：
@@ -845,27 +1132,22 @@ static void IOT_Event_Handle(const IOT_Event_t *evt)
 	switch (evt->e_type)
 	{
 		case IOT_EVT_AT_OK:
-			if(Mcu_Ota_Get_State() == MCU_OTA_STATE_NEED_RESUME
-			|| Mcu_Ota_Get_State() == MCU_OTA_STATE_DOWNLOAD_DONE)
-			{
-				#if MCU_OTA_UPDATE_MODE
-					Mcu_Ota_Start_Transmit();//启动ymodem传输
-				#else
-					//写flash/eeprom 的ota标志
-					//重启进boot进行ymodem协议传输固件
-				#endif
-			}
 				
 			break;
 
 		case IOT_EVT_MQTT_CONNECT_OK:
+			if (NET_CONFIG_ENTER == s_NetWorkConfigStatus)
+			{
+				s_NetWorkConfigStatus = NET_CONFIG_DONE;
+			}
+		
 			if (s_NetStatus != NET_STATUS_ONLINE)
 			{
 				s_NetStatus =  NET_STATUS_ONLINE;
 
 				/* 连云成功立即上报一次 ErrorCode + Warning + MCU版本号 */
-				IOT_UserApp_InitiativeReport(ERRORCODE);
-				IOT_UserApp_InitiativeReport(WARNING);
+				IOT_UserApp_ActiveReport(ERRORCODE);
+				IOT_UserApp_ActiveReport(WARNING);
 				/* 检查 MCU OTA 版本 */
 				IOT_UserApp_CheckMCUOTA();
 			}
@@ -873,6 +1155,9 @@ static void IOT_Event_Handle(const IOT_Event_t *evt)
 			break;
 
 		case IOT_EVT_WIFI_AP_UP:
+			s_NetWorkConfigStatus = NET_CONFIG_ENTER;
+			break;
+
 		case IOT_EVT_WIFI_CONNECTING:
 			s_NetStatus =  NET_STATUS_CONNECTING;
 			break;
@@ -882,13 +1167,26 @@ static void IOT_Event_Handle(const IOT_Event_t *evt)
 			break;
 
 		case IOT_EVT_WIFI_TIMEOUT:
+			s_NetWorkConfigStatus = NET_CONFIG_TIMEOUT;
+			break;
+
 		case IOT_EVT_WIFI_UNBIND_SUCCESS:
 			s_NetStatus =  NET_STATUS_OFFLINE;
 
 			break;
+		case IOT_EVT_WIFI_STATION_UP:
+			s_CheckExistNumber = 0;
+			s_RouterStatus = ROUTER_STATUS_STATION_UP;
+			break;
+
+		case IOT_EVT_WIFI_STATION_DOWN:
+			s_CheckExistNumber = 0;
+			s_RouterStatus =  ROUTER_STATUS_STATION_DOWN;
+			break;
 
 		case IOT_EVT_MQTT_RECV:
 			/* TODO: 属性下发解析 */
+			s_NetStatus =  NET_STATUS_ONLINE;
 			IOT_MQTTRECV_Handle(evt->para_buf);
 			break;
 
@@ -923,8 +1221,13 @@ static void IOT_Event_Handle(const IOT_Event_t *evt)
 
 		case IOT_EVT_MCUOTA_DOWNLOAD_DONE:
 			/* MCU OTA 固件下载完成 */
-			IOT_Lib_Send_ATCmd("MCUOTASEND=%d",OTA_YMODEM_VALID_SIZE);
 			Mcu_Ota_Set_State(MCU_OTA_STATE_DOWNLOAD_DONE);
+			#if !MCU_OTA_UPDATE_MODE
+				MCU_OTA_REBOOT();
+				//写flash/eeprom 的ota标志
+				//重启进boot进行ymodem协议传输固件
+				//在boot启动后将 mcu_ota_data.e_mcu_ota_state = MCU_OTA_STATE_DOWNLOAD_DONE; ,再调用 Mcu_Ota_Ymodem_Handle();
+			#endif
 			break;
 
 		case IOT_EVT_MCUOTA_TRANSPORT_REBOOT:
@@ -938,6 +1241,30 @@ static void IOT_Event_Handle(const IOT_Event_t *evt)
 }
 
 /* ========================= 公共接口实现 ========================= */
+/********************************************************************************
+ * @brief   查询 WiFi 模组 连接路由状态
+ * @details 拼装 AT+WJAPS\r\n 并发送
+ *          WiFi 模组返回 STATION_UP 表示已连接，STATION_DOWN 表示未连接
+ * @param   null
+ * @return  void
+ * @note    需要查询时调用；
+ *******************************************************************************/
+void IOT_GetRouter_Status(void)
+{
+	IOT_Lib_Send_ATCmd("WJAPS");
+}
+
+/********************************************************************************
+ * @brief   返回 WiFi 模组 连接路由状态
+ * @details 调用IOT_GetRouter_Status()	后查询该返回值，可以判断是否已连接路由以及是否有应答；
+ * @param   void
+ * @return  s_RouterStatus
+ * @note    需要使用时调用
+ *******************************************************************************/
+RouterStatus_t IOT_ReturnRouter_Status(void)
+{
+	return s_RouterStatus;
+}
 
 /********************************************************************************
  * @brief   获取网络时间
@@ -988,9 +1315,21 @@ void IOT_FactorTest(void)
  * @return  s_NetTime
  * @note    需要使用时调用
  *******************************************************************************/
-FactoryResult_t IOT_Return_FactoryResult(void)
+FactoryResult_e IOT_Return_FactoryResult(void)
 {
 	return s_FactoryResult;
+}
+
+/********************************************************************************
+ * @brief   配网状态获取
+ * @details 返回配网过程中的状态，在应用层做交互处理；
+ * @param   void
+ * @return  s_NetWorkConfigStatus
+ * @note    需要使用时调用
+ *******************************************************************************/
+NetWork_Config_Status_e IOT_Return_Net_Config_Status(void)
+{
+	return s_NetWorkConfigStatus;
 }
 
 /********************************************************************************
@@ -1000,7 +1339,7 @@ FactoryResult_t IOT_Return_FactoryResult(void)
  * @return  s_NetTime
  * @note    需要使用时调用
  *******************************************************************************/
-NetWorkStatus_t IOT_Return_NetStatus(void)
+NetWorkStatus_e IOT_Return_NetStatus(void)
 {
 	return s_NetStatus;
 }
@@ -1046,7 +1385,8 @@ void IOT_UserApp_Init(void)
 void IOT_UserApp_Handle(void)
 {
 	#if MCU_OTA_UPDATE_MODE
-	if(Mcu_Ota_Get_State() == MCU_OTA_STATE_YMODEM_TRANSMIT)
+	if(Mcu_Ota_Get_State().e_mcu_ota_state != MCU_OTA_STATE_IDLE && 
+		Mcu_Ota_Get_State().e_mcu_ota_state != MCU_OTA_STATE_WAIT_DOWNLOAD )
 	{/* Ymodem协议数据处理和解析 */
 		Mcu_Ota_Ymodem_Handle();
 	}
@@ -1080,23 +1420,10 @@ void IOT_UserApp_Handle(void)
 	}
 
 	/* 串口发送间隔*/
-	if(IOT_TXBusy_Return()) //还在发送时清 s_txIntervalCounter
-	{
-		s_txIntervalCounter = 0;
-	}
-	else
-	{
-		if(s_txIntervalCounter < IOT_TX_INTERVAL_MS)
-			s_txIntervalCounter ++;
-		else
-		{
-			IOT_TX_Handle();
-			s_txIntervalCounter = 0;
-		}
-	}
-	
+	IOT_TX_Handle();
+
 	/* MCU OTA 升级超时检测 */
-	if(Mcu_Ota_Get_State() != MCU_OTA_STATE_IDLE)
+	if(Mcu_Ota_Get_State().e_mcu_ota_state != MCU_OTA_STATE_IDLE)
 	{	
 		if(s_McuOtaCounter < IOT_MCU_OTA_TIME_MS)
 			s_McuOtaCounter ++;
@@ -1112,6 +1439,26 @@ void IOT_UserApp_Handle(void)
 		s_McuOtaCounter = 0;
 	}
 
+	/* WiFi模块存在状态检测 */
+	if (s_CheckExistCounter < IOT_CHECK_EXIST_INTERVAL_MS)
+	{
+		if(s_CheckExistCounter == 0)
+		{
+			IOT_GetRouter_Status();
+		}
+		s_CheckExistCounter ++;
+		
+	}
+	else
+	{ 
+		s_CheckExistCounter = 0;
+		s_CheckExistNumber ++;
+		if(s_CheckExistNumber > IOT_CHECK_EXIST_NUMBER)
+		{
+			s_CheckExistNumber = 0;
+			s_RouterStatus = ROUTER_STATUS_NULL; //连续发送3次 WiFi模块没回复
+		}	
+	}
 	/* 未连云直接返回，不上报状态 */
 	if (s_NetStatus != NET_STATUS_ONLINE)
 	{

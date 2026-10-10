@@ -30,32 +30,34 @@ static IOT_EventCallback_t s_eventCb = NULL;
  */
 static const IOT_FrameEntry_t s_frameTable[] = {
 	/* --- AT 通用响应 --- */
-	{ "OK",                             IOT_MATCH_EXACT,  IOT_EVT_AT_OK,                 		},
-	{ "ERROR",                          IOT_MATCH_EXACT,  IOT_EVT_AT_ERROR,              		},
-	{ "+GETTIME:",                      IOT_MATCH_PREFIX, IOT_EVT_GET_TIME,              		},
-	{ "+FACEVENT:",                     IOT_MATCH_PREFIX, IOT_EVT_FACTORYTEST,           		},
+	{ "OK",                             IOT_MATCH_EXACT,  IOT_EVT_AT_OK,                 },
+	{ "ERROR",                          IOT_MATCH_EXACT,  IOT_EVT_AT_ERROR,              },
+	{ "+GETTIME:",                      IOT_MATCH_PREFIX, IOT_EVT_GET_TIME,              },
+	{ "+FACEVENT:",                     IOT_MATCH_PREFIX, IOT_EVT_FACTORYTEST,           },
 
 	/* --- 控制命令下发 */
-	{ "+MQTTRECV:0,",                   IOT_MATCH_PREFIX, IOT_EVT_MQTT_RECV,             		},
+	{ "+MQTTRECV:0,",                   IOT_MATCH_PREFIX, IOT_EVT_MQTT_RECV,             },
 
 	/* --- WiFi 事件 */
-	{ "+MQTTEVENT:CONNECT,SUCCESS",     IOT_MATCH_EXACT, IOT_EVT_MQTT_CONNECT_OK,       		},
-	{ "+WEVENT:AP_UP",                  IOT_MATCH_EXACT, IOT_EVT_WIFI_AP_UP,            		},
-	{ "+WEVENT:CONNECTING",             IOT_MATCH_EXACT, IOT_EVT_WIFI_CONNECTING,       		},
-	{ "+WEVENT:CONNECTTED",             IOT_MATCH_EXACT, IOT_EVT_WIFI_CONNECTED,        		},
-	{ "+WEVENT:TIMEOUT",                IOT_MATCH_EXACT, IOT_EVT_WIFI_TIMEOUT,          		},
-	{ "+WEVENT:UNBIND,SUCCESS",         IOT_MATCH_EXACT, IOT_EVT_WIFI_UNBIND_SUCCESS,   		},
+	{ "+MQTTEVENT:CONNECT,SUCCESS",     IOT_MATCH_EXACT, IOT_EVT_MQTT_CONNECT_OK,        },
+	{ "+WEVENT:AP_UP",                  IOT_MATCH_EXACT, IOT_EVT_WIFI_AP_UP,             },
+	{ "+WEVENT:CONNECTING",             IOT_MATCH_EXACT, IOT_EVT_WIFI_CONNECTING,        },
+	{ "+WEVENT:CONNECTTED",             IOT_MATCH_EXACT, IOT_EVT_WIFI_CONNECTED,         },
+	{ "+WEVENT:TIMEOUT",                IOT_MATCH_EXACT, IOT_EVT_WIFI_TIMEOUT,           },
+	{ "+WEVENT:UNBIND,SUCCESS",         IOT_MATCH_EXACT, IOT_EVT_WIFI_UNBIND_SUCCESS,    },
+	{ "STATION_UP",         			IOT_MATCH_EXACT, IOT_EVT_WIFI_STATION_UP,        },
+	{ "STATION_DOWN",         			IOT_MATCH_EXACT, IOT_EVT_WIFI_STATION_DOWN,      },
 
 
 	/* ---WIFI OTA 事件（具体事件须排在通配前缀 +OTAEVENT: 之前） --- */
-	{ "+OTAEVENT:DOWNLOADING",          IOT_MATCH_EXACT, IOT_EVT_OTA_PROGRESS,       			},
-	{ "+OTAEVENT:INSTALLING",           IOT_MATCH_EXACT, IOT_EVT_OTA_PROGRESS,       			},
-	{ "+OTAEVENT:SUCCESS",              IOT_MATCH_EXACT, IOT_EVT_OTA_SUCCESS,           		},
+	{ "+OTAEVENT:DOWNLOADING",          IOT_MATCH_EXACT, IOT_EVT_OTA_PROGRESS,           },
+	{ "+OTAEVENT:INSTALLING",           IOT_MATCH_EXACT, IOT_EVT_OTA_PROGRESS,           },
+	{ "+OTAEVENT:SUCCESS",              IOT_MATCH_EXACT, IOT_EVT_OTA_SUCCESS,            },
 
 	/* --- MCU OTA 事件（带额外解析的条目须排在同前缀纯映射之前） --- */
-	{ "+MCUOTAEVENT:VERSION,",          IOT_MATCH_PREFIX, IOT_EVT_MCUOTA_VERSION,        		},
-	{ "+MCUOTAEVENT:DOWNLOAD,DONE",     IOT_MATCH_EXACT,  IOT_EVT_MCUOTA_DOWNLOAD_DONE,  		},
-	{ "+MCUOTAEVENT:TRANSPORT,REBOOT",  IOT_MATCH_EXACT, IOT_EVT_MCUOTA_TRANSPORT_REBOOT,		},
+	{ "+MCUOTAEVENT:VERSION,",          IOT_MATCH_PREFIX, IOT_EVT_MCUOTA_VERSION,        },
+	{ "+MCUOTAEVENT:DOWNLOAD,DONE",     IOT_MATCH_EXACT,  IOT_EVT_MCUOTA_DOWNLOAD_DONE,  },
+	{ "+MCUOTAEVENT:TRANSPORT,REBOOT",  IOT_MATCH_EXACT, IOT_EVT_MCUOTA_TRANSPORT_REBOOT,},
 
 	/* ---- 新增下行帧在此行之前追加 ---- */
 };
@@ -171,18 +173,6 @@ void IOT_RX_Handle(void)
  * @param   cmd: 不含 "AT+" 前缀和结束符的指令字符串
  * @return  void
  *******************************************************************************/
-// void IOT_Lib_Send_ATCmd(const char *cmd)
-// {
-// 	char tx_ATBuf[IOT_UART_TX_BUF_SIZE];
-// 	if (cmd == NULL)
-// 	{
-// 		return;
-// 	}
-// 	memset(tx_ATBuf, 0, sizeof(tx_ATBuf));
-// 	snprintf(tx_ATBuf, sizeof(tx_ATBuf), "AT+%s\r\n", cmd);
-// 	IOT_UART_TxEnQueue(tx_ATBuf);
-// }
-
 void IOT_Lib_Send_ATCmd(const char *fmt, ...)
 {
     char tx_ATBuf[IOT_UART_TX_BUF_SIZE];
@@ -194,11 +184,11 @@ void IOT_Lib_Send_ATCmd(const char *fmt, ...)
     va_start(args, fmt);
 
     int len = snprintf(tx_ATBuf, sizeof(tx_ATBuf), "AT+");
-    vsnprintf(tx_ATBuf + len, sizeof(tx_ATBuf) - len, fmt, args);
-    strcat(tx_ATBuf, "\r\n");
+    vsnprintf(tx_ATBuf + len, sizeof(tx_ATBuf) - len - 3, fmt, args);
+    strcat(tx_ATBuf, "\r\n\0");
     va_end(args);
 
-    IOT_UART_TxEnQueue(tx_ATBuf);
+    IOT_UART_TxEnQueue(tx_ATBuf,strlen(tx_ATBuf));
 }
 
 /********************************************************************************

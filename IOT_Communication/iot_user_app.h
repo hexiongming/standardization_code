@@ -12,11 +12,21 @@
  *     并根据 key 的属性修改对应的 type (int/str数据类型)/write_enable(是否可写)/allReport_enable(全属性上报属性是否包含该属性)
  * 2、 根据实际机型修改 g_device_Series / g_device_ModelID / g_mcu_Manufacturer
  * 3、 修改 s_filterLifeConfig 和 s_filterResetConfig 滤芯的配置参数；如果没有滤芯功能，则 HAVE_FILTER 定义为0
- * 4、 由于差异上报不支持字符串比较，所以如有字符串参数变化后需要上报，需要主动调用 IOT_UserApp_InitiativeReport() 传入需要上报的属性符 主动上报
+ * 4、 由于差异上报不支持字符串比较，所以如有字符串参数变化后需要上报，需要主动调用 IOT_UserApp_ActiveReport() 传入需要上报的属性符 主动上报
  * 5、 需要在 Device_Cmd_Process() 函数中实现APP指令下发的功能执行逻辑或变量赋值；
  * 6、 需要在 Device_ParamValue_Get() 函数中实现属性列表中的参数获取逻辑，返回获取到的参数值
  * 7、 属性表中储存的都是uint32_t 类型，,实际使用中请自行转换为实际参数类型
- * 
+ * 8、 Mcu_OtaSetFlag_Reboot();在boot中传输固件需要自己实现：
+ * 若是在boot中传输固件，请自行实现：
+	(1、写flash/eeprom 的ota标志
+	(2、重启进boot进行ymodem协议传输固件
+	(3、在重启进入boot后将 mcu_ota_data.e_mcu_ota_state = MCU_OTA_STATE_DOWNLOAD_DONE; ,再调用 Mcu_Ota_Ymodem_Handle();
+ * 若是在app中传输固件，请自行实现：
+	(1、写flash/eeprom 的ota标志
+	(2、在boot中进行固件覆盖或跳转到新App区执行；
+ * 9、通过 IOT_ReturnRouter_Status() 返回路由器连接状态，如果返回ROUTER_STATUS_NULL，代表WiFi模块通讯不成功； 
+
+
  * 本文件提供以下接口供外部调用：
  * IOT_GetNetTime();					发送获取网络时间指令
  * IOT_Return_NetTime();				读取返回网络时间的结果 
@@ -24,7 +34,14 @@
  * IOT_Return_FactoryResult();			读取返回产测的结果
  * IOT_UserApp_Init();					IOT初始化（上电后调用一次）
  * IOT_UserApp_Handle();				IOT事件处理主循环轮询（在 main loop 中 IOT_POLL_INTERVAL_MS (默认10ms) 周期调用）
- * IOT_UserApp_InitiativeReport();      需要主动上报某个属性的时候调用，每次只能上报一个属性
+ * IOT_UserApp_ActiveReport();		    需要主动上报某个属性的时候调用，每次只能上报一个属性 
+ * **特别注意：差异属性上报只能解决整型变量的差异属性上报，字符类型、数组类型、json对象不能通过差异上报，只能在应用层需要上报时手动调用 IOT_UserApp_ActiveReport()
+ * IOT_Return_Net_Config_Status;		返回配网过程的状态
+ * IOT_Return_NetStatus();				返回网络状态
+ * IOT_GetRouter_Status();				发送获取WiFi 模组连接路由状态的指令
+ * IOT_ReturnRouter_Status(void);		返回 WiFi 模组连接路由状态
+ * 
+ * 
  */
 #ifndef IOT_USER_APP_H
 #define IOT_USER_APP_H
@@ -45,47 +62,58 @@ extern "C" {
 /*
  * 单包总长度上限（字节），含完整 AT 帧：AT+MQTTSEND=<len>,<json>\r\n
  */
-#define IOT_PKG_MAX_SIZE        			IOT_UART_TX_BUF_SIZE    	/* 上报数据封包总长度上限（字节）*/
+#define IOT_PKG_MAX_SIZE            IOT_UART_TX_BUF_SIZE               /* 上报数据封包总长度上限（字节）*/
 
 
-#define IOT_POLL_INTERVAL_MS        (10U)     							/* IOT_UserApp_Handle 调用周期（ms）*/
-#define IOT_TX_INTERVAL_MS          (50U / IOT_POLL_INTERVAL_MS)     	/* 两次发送之间的最小间隔（ms）*/
-#define IOT_BOOT_DELAY_MS           (3000U / IOT_POLL_INTERVAL_MS)    	/* 上电等待模组就绪时间（ms）*/
-#define IOT_REPORT_INTERVAL_MS      (1000U / IOT_POLL_INTERVAL_MS)   	/* 属性差异上报最小间隔（ms）*/
-#define IOT_FULL_REPORT_INTERVAL_MS (3600000U / IOT_POLL_INTERVAL_MS) 	/* 全属性定时上报间隔（ms）*/
-#define IOT_MCU_OTA_TIME_MS 		(600000U / IOT_POLL_INTERVAL_MS) 	/* MCU OTA 超时时间（ms）*/
+#define IOT_POLL_INTERVAL_MS        (10U)                               /* IOT_UserApp_Handle 调用周期（ms）*/
+#define IOT_BOOT_DELAY_MS           (3000U / IOT_POLL_INTERVAL_MS)      /* 上电等待模组就绪时间（ms）*/
+#define IOT_REPORT_INTERVAL_MS      (1000U / IOT_POLL_INTERVAL_MS)      /* 属性差异上报最小间隔（ms）*/
+#define IOT_FULL_REPORT_INTERVAL_MS (3600000U / IOT_POLL_INTERVAL_MS)   /* 全属性定时上报间隔（ms）*/
+#define IOT_MCU_OTA_TIME_MS         (600000U / IOT_POLL_INTERVAL_MS)    /* MCU OTA 超时时间（ms）*/
+#define IOT_CHECK_EXIST_INTERVAL_MS (30000U / IOT_POLL_INTERVAL_MS)     /* WiFi模块存在检测间隔（ms）*/
+#define IOT_CHECK_EXIST_NUMBER      (3)                                 /* WiFi模块存在检测次数 */
 
 /* ========================= 属性描述符表 ========================= */
 
 /*
  * KEY Vlue 设备属性表
  */
-typedef enum
+typedef enum DeviceParam
 {
-    VER,
-    MCUMANUFACTURER,
-    STATUS,
-    INPUTTEMP,
-    OUTPUTTEMP,
-    SETTEMP,
-    SETOUTLET,
-    TOTALOUTLET,
-    PURETDS,
-    RAWTDS,
-    WARMWATERSET,
-    HOTWATERSET,
-    OUTLET120SET,
-    OUTLET350SET,
-    OUTLET800SET,
-    STERILIZERSTATE,
-    REFRIGERATIONMODE,
-    MAXFILTERRESET,
-    PC5IN1FILTERRESET,
+	VER,
+	MCUMANUFACTURER,
+	STATUS,
+	INPUTTEMP,
+	OUTPUTTEMP,
+	SETTEMP,
+	SETOUTLET,
+	TOTALOUTLET,
+	PURETDS,
+	RAWTDS,
+	WARMWATERSET,
+	HOTWATERSET,
+	OUTLET120SET,
+	OUTLET350SET,
+	OUTLET800SET,
+	STERILIZERSTATE,
+	REFRIGERATIONMODE,
+	MAXFILTERRESET,
+	PC5IN1FILTERRESET,
+	NIGHTMODE0,
+	NIGHTMODE1,
+	NIGHTMODE2,
+	NIGHTMODE3,
+	NIGHTMODE4,
+	NIGHTMODE5,
+	NIGHTMODE6,
+	NIGHTMODE7,
+	NIGHTMODE8,
+	NIGHTMODE9,
 	AIPLAN,
 	ERRORCODE,
 	WARNING,
-} DeviceParam_e;
-
+	ICECUBEKANBAN
+}DeviceParam_e;
 
 /*
  * 数据类型标志：
@@ -99,7 +127,8 @@ typedef enum
 {
 	IOT_ATTR_INT = 0,   /* 整型属性 */
 	IOT_ATTR_STR,       /* 字符串属性 */
-	IOT_ATTR_JSON       /* JSON属性 */
+	IOT_ATTR_JSON,      /* JSON属性 */
+	IOT_ATTR_ARRAY      /* 数组属性 */
 } IOT_AttrType_t;
 
 /*
@@ -116,18 +145,26 @@ typedef void (*IOT_AttrWriteCb_t)(void *pData);
 
 typedef struct
 {
-	const char           *key;				/* 属性描述符 Key */
-	DeviceParam_e        e_param;      		/* 设备属性表 */
-	IOT_AttrType_t       type;				/* 数据类型 */
-	bool_t               write_enable;  	/* true=云端可写 */
-	bool_t               allReport_enable;  /* true=全属性上报使能 */
+	const char           *key;               /* 属性描述符 Key */
+	uint8_t              param;              /* 设备属性表 */
+	IOT_AttrType_t       type;               /* 数据类型 */
+	bool_t               write_enable;       /* true=云端可写 */
+	bool_t               allReport_enable;   /* true=全属性上报使能 */
 } IOT_AttrEntry_t;
 
 typedef union 
 {
-	char                *strValue;	        /* 字符型数据地址,禁止传局部变量地址*/
-	int32_t              intValue;			/* 整型数据 */			
+	char                *strValue;          /* 字符型数据地址,禁止传局部变量地址*/
+	int32_t              intValue;          /* 整型数据 */			
 } IOT_paramValue_u;
+
+typedef struct
+{
+	uint8_t                param;               /* 设备属性表 */
+	const IOT_AttrEntry_t  *json_attr;          /* json属性描述符 */
+	uint8_t                json_attr_count;     /* json属性描述符数量 */
+	IOT_paramValue_u       *paramValue;			/* 属性值储存位置 */
+} IOT_Json_Attr_t;
 
 typedef struct {
     const char *jsonKey;		/* JSON键名，如"ROFilterLife" */
@@ -171,7 +208,27 @@ typedef enum {
     FACTORY_TESTING,    // 正在测试
     FACTORY_SUCCESS,	// 成功
 	FACTORY_FAIL		// 失败
-} FactoryResult_t;
+} FactoryResult_e;
+
+/**
+ * @brief 路由器状态
+ */
+typedef enum {
+	ROUTER_STATUS_NULL,				//WiFi无回复
+	ROUTER_STATUS_STATION_UP,		//已连接路由器 
+	ROUTER_STATUS_STATION_DOWN		//未连接路由器
+} RouterStatus_t;
+
+/**
+ * @brief 配网状态
+ */
+typedef enum {
+    NET_CONFIG_NULL,	
+    NET_CONFIG_ENTER,			// 已进入配网状态
+	NET_CONFIG_TIMEOUT,			// 配网超时
+	NET_CONFIG_DONE,			// 配网完成，已连上云服务器
+	NET_CONFIG_FAIL				// 配网失败
+} NetWork_Config_Status_e;
 
 /**
  * @brief 网络状态
@@ -181,7 +238,7 @@ typedef enum {
     NET_STATUS_CONNECTING,		// 正在连接路由器
     NET_STATUS_CONNECTTED,		// 已连上路由器，未连上云服务器
 	NET_STATUS_ONLINE			// 已连上云服务器
-} NetWorkStatus_t;
+} NetWorkStatus_e;
 /* ========================= JSON 构建工具 ========================= */
 
 /*
@@ -204,6 +261,17 @@ typedef struct
 } JsonBuilder_t;
 
 /* ========================= 公共接口 ========================= */
+/**
+ * @brief   查询 WiFi 模组 连接路由状态
+ * @note    需要查询时调用
+ */
+void IOT_GetRouter_Status(void);
+
+/**
+ * @brief   返回 WiFi 模组 连接路由状态
+ * @note    需要使用时调用
+ */
+RouterStatus_t IOT_ReturnRouter_Status(void);
 
 /**
  * @brief  获取网络时间
@@ -227,34 +295,26 @@ void IOT_FactorTest(void);
  * @brief  返回产测结果
  * 		   按实际需要使用调用
  */
-FactoryResult_t IOT_Return_FactoryResult(void);
+FactoryResult_e IOT_Return_FactoryResult(void);
 
 /**
  * @brief  返回联网状态
  * 		   按实际需要使用调用
  */
-NetWorkStatus_t IOT_Return_NetStatus(void);
+NetWorkStatus_e IOT_Return_NetStatus(void);
 
 /**
- * @brief  错误代码上报
- * @param   errorCode 要上报的错误代码
- *         需要使用时调用
+ * @brief  返回配网过程中的状态，在应用层做交互处理；
+ * 		   按实际需要使用调用
  */
-void IOT_UserApp_ReportErrorCode(char *errorCode);
-
-/**
- * @brief  告警代码单独上报
- * @param   waringCode 要上报的告警代码
- *         需要使用时调用
- */
-void IOT_UserApp_ReportWaringCode(int32_t waringCode);
+NetWork_Config_Status_e IOT_Return_Net_Config_Status(void);
 
 /**
  * @brief   主动上报某些属性
  * @param   DeviceParam_e
  * @note    需要主动上报某个属性的时候调用，每次只能上报一个属性
 */
-void IOT_UserApp_InitiativeReport(DeviceParam_e param);
+void IOT_UserApp_ActiveReport(uint8_t param);
 
 /**
  * @brief  应用层初始化（上电后调用一次）

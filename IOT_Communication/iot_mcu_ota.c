@@ -16,37 +16,63 @@ static mcu_ota_data_t mcu_ota_data;
 #if MCU_OTA_UPDATE_MODE
 static uint32_t s_ota_write_offset = 0;
 
-//=============================================================================
-// 写flash函数实现，需要根据芯片差异进行修改
-// 需要包含MCU底层flash硬件驱动头文件；
-// 需修改写初始地址；
-//=============================================================================
+static Result_e Mcu_Ota_Erase_Flash(void)
+{//实现擦除flash的函数
+	//示例
+	uint32_t start_addr = MCU_OTA_START_ADDR;   // 起始地址
+	uint32_t end_addr = MCU_OTA_END_ADDR;       // 结束地址
+	uint32_t page_count = (end_addr - start_addr) / MCU_ONE_PAGE_SIZE;
+	if ((end_addr - start_addr) % MCU_ONE_PAGE_SIZE)
+	{
+		page_count ++;
+	}
+		// 循环擦除每一页
+	for (uint32_t i = 0; i < page_count; i++)
+	{
+		if (0 != EraseSector_Code(i * MCU_ONE_PAGE_SIZE + MCU_OTA_START_ADDR))
+		{ // 0为成功
+			return RESULT_ERROR;
+		}
+	}
+	return RESULT_SUCCESS;
+
+}
+/********************************************************************************
+ * @brief   写flash函数实现，需要根据芯片差异进行修改
+ * @param   addr: 写flash的起始地址
+ * @param   data: 写flash的数据
+ * @param   len: 写flash的数据长度	
+ * @return  RESULT_SUCCESS ：成功 RESULT_ERROR: 失败
+ * @note    需要包含MCU底层flash硬件驱动头文件
+ * 			需修改写初始地址
+ *******************************************************************************/
 static Result_e Mcu_Ota_Flash_Write(uint32_t addr, uint8_t* data,uint32_t data_len)
 {
 	uint32_t word_len;
 	uint8_t buff[OTA_YMODEM_VALID_SIZE]; 
 
 	if ((data_len % 4 != 0) || (data_len == 0))
-    {
-        return RESULT_ERROR;
-    }
+	{
+		return RESULT_ERROR;
+	}
 
-    word_len = data_len / 4; 
-	if (0 != EraseSector_Code(MCU_OTA_START_ADDR))
-    { // 0为成功
-        return RESULT_ERROR;
-    }
+	word_len = data_len / 4; 
+
 	memcpy(buff, data, data_len);
-    if (0 != FLASH_Code_Write((uint32_t)(addr + MCU_OTA_START_ADDR), word_len, (uint32_t *)buff))
-    { // 0为成功
-        return RESULT_ERROR;
-    }
+	if (0 != FLASH_Code_Write((uint32_t)(addr + MCU_OTA_START_ADDR), word_len, (uint32_t *)buff))
+	{ // 0为成功
+		return RESULT_ERROR;
+	}
 	return RESULT_SUCCESS;
-}
+	}
 
-//=============================================================================
-// 内部CRC16-XMODEM 实现
-//=============================================================================
+
+/********************************************************************************
+ * @brief   内部CRC16-XMODEM 实现
+ * @param   data: 待计算的数据
+ * @param   len: 待计算的数据长度
+ * @return  CRC16
+ *******************************************************************************/
 static uint16_t Ymodem_Check_Crc16(const uint8_t *data, uint32_t len) 
 {
     uint16_t crc = 0x0000;
@@ -68,23 +94,27 @@ static uint16_t Ymodem_Check_Crc16(const uint8_t *data, uint32_t len)
     return crc;
 }
 
-//=============================================================================
-// 发送单字节
-//=============================================================================
+/********************************************************************************
+ * @brief   发送单字节
+ * @param   c: 待发送的字节
+ * @return  void
+ *******************************************************************************/
 static void Ota_Send_Byte(uint8_t c) 
 {
 	char send_data = c;
-	IOT_UART_TxEnQueue(&send_data);
+	IOT_UART_TxEnQueue(&send_data,1);
 }
 
 
-//=============================================================================
-// 处理YMODEM传输带的头包固件信息
-//=============================================================================
+/********************************************************************************
+ * @brief   处理YMODEM传输带的头包固件信息
+ * @param   data: 串口接收的数据， data_len 数据长度
+ * @return  执行结果
+ *******************************************************************************/
 static Result_e Ymodem_Header_Msg_Deal(uint8_t* data,uint16_t data_len)
 {
 
-    uint16_t filename_len = 0;
+	uint16_t filename_len = 0;
 
 	// 计算filename长度
 	while (filename_len < data_len && data[filename_len] != 0x00) 
@@ -136,19 +166,23 @@ static Result_e Ymodem_Header_Msg_Deal(uint8_t* data,uint16_t data_len)
 		
 	}
 
-    return RESULT_SUCCESS;
+	return RESULT_SUCCESS;
 }
-//=============================================================================
-// 处理YMODEM传输的固件数据BIN文件数据并写flash
-//=============================================================================
+
+/********************************************************************************
+ * @brief   处理YMODEM传输的固件数据BIN文件数据并写flash
+ * @param   data: 串口接收的数据， data_len 数据长度
+ * @return  执行结果
+ *******************************************************************************/
 static Result_e Ymodem_Packet_Bin_Deal(uint8_t* data,uint32_t data_len)
 {
-	 if(mcu_ota_data.packet_serial == data[1]) //相同一帧数据已处理就不处理了；
-    {
-        return RESULT_ERROR;
-    }
+	if(mcu_ota_data.packet_num == 0)  //第一包数据
+	{
+		if(RESULT_SUCCESS != Mcu_Ota_Erase_Flash())  //擦除flash
+			return RESULT_ERROR;
 
-	if( 0 == Mcu_Ota_Flash_Write(s_ota_write_offset,data,data_len))	//写flash
+	}
+	if( 0 == Mcu_Ota_Flash_Write(s_ota_write_offset,data,data_len))  //写flash
 	{
 		mcu_ota_data.packet_num ++;
 		mcu_ota_data.receive_byte += data_len;
@@ -159,13 +193,12 @@ static Result_e Ymodem_Packet_Bin_Deal(uint8_t* data,uint32_t data_len)
 		return RESULT_ERROR;
 	}
 
-	if((mcu_ota_data.packet_num == mcu_ota_data.packet_sum) 
-		&& (mcu_ota_data.receive_byte == mcu_ota_data.packet_size))
+	if((mcu_ota_data.packet_num == mcu_ota_data.packet_sum))
 	{
 		mcu_ota_data.e_ymodem_step = YMODEM_EOT_NAK;
 	}
-    mcu_ota_data.packet_serial = data[1];
-    return RESULT_SUCCESS;
+
+	return RESULT_SUCCESS;
 }
 
 /********************************************************************************
@@ -206,6 +239,7 @@ static Result_e Mcu_Ota_Ymodem_Transmit(uint8_t *data ,uint16_t len)
 		crc_calc = Ymodem_Check_Crc16(data + 3, msg_len-5);
 		if( crc_calc != crc_recv)
 		{
+			Ota_Send_Byte(NAK);
 			return RESULT_ERROR;
 		}
 
@@ -218,6 +252,7 @@ static Result_e Mcu_Ota_Ymodem_Transmit(uint8_t *data ,uint16_t len)
 					Ota_Send_Byte(ACK);
 					Ota_Send_Byte(C);
 					mcu_ota_data.e_ymodem_step = YMODEM_PACKET;
+					mcu_ota_data.packet_serial_sum = 0;
 					s_ota_write_offset = 0; //重头开始写flash
 					return RESULT_SUCCESS;
 				}
@@ -227,20 +262,37 @@ static Result_e Mcu_Ota_Ymodem_Transmit(uint8_t *data ,uint16_t len)
 					return RESULT_ERROR;
 				}
 			}
-
 		}
 		else if(mcu_ota_data.e_ymodem_step == YMODEM_PACKET)
 		{
-			if(Ymodem_Packet_Bin_Deal(data + 3,msg_len -5) == RESULT_SUCCESS)
+			uint32_t current_packet_sum ;
+			current_packet_sum = data[1] + mcu_ota_data.packet_serial_sum *256;
+			if(current_packet_sum <= mcu_ota_data.packet_num ) //当前传输的包数小于等于已传输的包数
 			{
 				Ota_Send_Byte(ACK);
 				return RESULT_SUCCESS;
 			}
-			else
+			else if(current_packet_sum > mcu_ota_data.packet_num + 1) //当前传输的包数大于已传输的包数+1
 			{
 				Ota_Send_Byte(NAK);
 				return RESULT_ERROR;
 			}
+			else //只有当前传输的包数等于需要接收的下一包才写flash
+			{
+				if(Ymodem_Packet_Bin_Deal(data + 3,msg_len -5) == RESULT_SUCCESS)
+				{
+					Ota_Send_Byte(ACK);
+					if(data[1] == 0xff)
+						mcu_ota_data.packet_serial_sum ++;
+					return RESULT_SUCCESS;
+				}
+				else
+				{
+					Ota_Send_Byte(NAK);
+					return RESULT_ERROR;
+				}
+			}
+			
 		}
 		else if(mcu_ota_data.e_ymodem_step == YMODEM_END)
 		{
@@ -258,42 +310,86 @@ static Result_e Mcu_Ota_Ymodem_Transmit(uint8_t *data ,uint16_t len)
  * @details 从RxQueueu获取数据包，并调用协议解析
  * @param   void
  * @return  Result_e
- * @note    在 Mcu_Ota_Get_State() == MCU_OTA_STATE_YMODEM_TRANSMIT 时调用
+ * @note    在 Mcu_Ota_Get_State().e_mcu_ota_state == MCU_OTA_STATE_YMODEM_TRANSMIT 时调用
+ *          单独使用时须以固定周期 IOT_POLL_INTERVAL_MS（10ms）调用
  *******************************************************************************/
 Result_e Mcu_Ota_Ymodem_Handle(void) 
 {
 	uint16_t readLen = 0;
 	uint16_t targetLen = 0;
 	uint8_t packetBuf[MCU_OTA_PACKET_BUF_SIZE];
+	static uint16_t timeout = 0;
 
-	uint16_t dataLen = IOT_RxQueue_DataLen();
+	if(mcu_ota_data.e_mcu_ota_state == MCU_OTA_STATE_DOWNLOAD_DONE)
+	{
+		Mcu_Ota_HandShake_Ymodem_Size();
+		IOT_RxQueue_Init(); //清空接收队列，避免未处理的数据影响
+		timeout = 0;
+		return RESULT_SUCCESS;
+	}
+	else if(mcu_ota_data.e_mcu_ota_state == MCU_OTA_STATE_SEND_YMODEM_SIZE ||
+			mcu_ota_data.e_mcu_ota_state == MCU_OTA_STATE_NEED_RESUME) 
+	{
+		uint16_t dataLen = IOT_RxQueue_DataLen();
+		targetLen = strlen("OK");
+		if(dataLen >= targetLen)
+		{
+			readLen = IOT_RxQueue_ReadData(packetBuf, targetLen);
+			if (readLen == targetLen)
+			{
+				if(NULL != strstr((const char*)packetBuf, "OK"))
+				{
+					Mcu_Ota_Start_Transmit();	//	开始Ymodem 传输
+					timeout = 0;
+					return RESULT_SUCCESS;
+				}
+			}
+		}
+	}
+	else if(mcu_ota_data.e_mcu_ota_state == MCU_OTA_STATE_YMODEM_TRANSMIT)
+	{
+		uint16_t dataLen = IOT_RxQueue_DataLen();
 
-
-	if(mcu_ota_data.e_ymodem_step == YMODEM_PACKET 
+		if(mcu_ota_data.e_ymodem_step == YMODEM_PACKET 
 		|| mcu_ota_data.e_ymodem_step == YMODEM_END 
 		|| mcu_ota_data.e_ymodem_step == YMODEM_HEADER)
-	{
-		targetLen = MCU_OTA_PACKET_BUF_SIZE;
+		{
+			targetLen = MCU_OTA_PACKET_BUF_SIZE;
+		}
+		else if(mcu_ota_data.e_ymodem_step == YMODEM_EOT_NAK 
+			|| mcu_ota_data.e_ymodem_step == YMODEM_EOT_ACK)
+		{
+			targetLen = 1;
+		}
+		if(dataLen >= targetLen)
+		{
+
+			readLen = IOT_RxQueue_ReadData(packetBuf, targetLen);
+			if (readLen == targetLen)
+			{
+				// 数据完整，传递给协议解析
+				timeout = 0;
+				IOT_RxQueue_Init(); //清空接收队列，避免未处理的数据影响
+				return Mcu_Ota_Ymodem_Transmit(packetBuf, targetLen);
+			}
+		}
 	}
-	else if(mcu_ota_data.e_ymodem_step == YMODEM_EOT_NAK 
-		|| mcu_ota_data.e_ymodem_step == YMODEM_EOT_ACK)
+	else if(mcu_ota_data.e_mcu_ota_state == MCU_OTA_STATE_TRANSMIT_DONE)
 	{
-		targetLen = 1;
+		timeout = 0;
+		return RESULT_SUCCESS;
 	}
-	if(dataLen < targetLen)
+
+	if(timeout > MCU_OTA_TIME_OUT_COUNT)   
 	{
-		return RESULT_ERROR;
-	}
-	readLen = IOT_RxQueue_ReadData(packetBuf, targetLen);
-	if (readLen == targetLen)
-	{
-		// 数据完整，传递给协议解析
-		return Mcu_Ota_Ymodem_Transmit(packetBuf, targetLen);
+		timeout = 0;
+		Mcu_Ota_Resume_Transmit();         //超时无数据，重头开始数据传输
 	}
 	else
 	{
-		return RESULT_ERROR;
+		timeout ++;
 	}
+	return RESULT_ERROR;
 }
 
 /********************************************************************************
@@ -306,11 +402,10 @@ Result_e Mcu_Ota_Ymodem_Handle(void)
 void Mcu_Ota_Start_Transmit(void) 
 {
 	Ota_Send_Byte(C); // 启动Ymodem模式
-    Mcu_Ota_Init();	//	初始化OTA相关变量
+	Mcu_Ota_Init();	//	初始化OTA相关变量
 	IOT_RxQueue_Init(); //清空接收队列，避免未处理的数据影响
 	mcu_ota_data.e_mcu_ota_state = MCU_OTA_STATE_YMODEM_TRANSMIT;
 	mcu_ota_data.e_ymodem_step = YMODEM_HEADER;
-    
 }
 #endif
 
@@ -325,10 +420,22 @@ void Mcu_Ota_Start_Transmit(void)
  *******************************************************************************/
 void Mcu_Ota_Init(void)
 {
-    memset(&mcu_ota_data, 0, sizeof(mcu_ota_data_t));
+	memset(&mcu_ota_data, 0, sizeof(mcu_ota_data_t));
 
-    mcu_ota_data.e_mcu_ota_state = MCU_OTA_STATE_IDLE;
+	mcu_ota_data.e_mcu_ota_state = MCU_OTA_STATE_IDLE;
+}
 
+/********************************************************************************
+ * @brief   协商Ymodem传输字节
+ * @details 发送AT+MCUOTARESUME命令恢复中断的Ymodem传输
+ * @param   void
+ * @return  void
+ * @note    在NEED_RESUME状态下调用，继续之前中断的传输
+ *******************************************************************************/
+void Mcu_Ota_HandShake_Ymodem_Size(void) 
+{
+	IOT_Lib_Send_ATCmd("MCUOTASEND=%d",OTA_YMODEM_VALID_SIZE);
+	mcu_ota_data.e_mcu_ota_state = MCU_OTA_STATE_SEND_YMODEM_SIZE;
 }
 
 /********************************************************************************
@@ -346,15 +453,15 @@ void Mcu_Ota_Resume_Transmit(void)
 }
 
 /********************************************************************************
- * @brief   获取OTA当前状态
- * @details 返回OTA状态机的当前状态值
+ * @brief   获取OTA当前所有信息
+ * @details 返回OTA状态、进度、固件大小等信息
  * @param   void
- * @return  mcu_ota_state_e: 当前OTA状态
- * @note    供上层应用查询OTA状态
+ * @return  mcu_ota_data_t: 当前OTA的所有信息
+ * @note    供上层应用查询OTA的所有信息
  *******************************************************************************/
-mcu_ota_state_e Mcu_Ota_Get_State(void)                
+mcu_ota_data_t Mcu_Ota_Get_State(void)                
 { 
-    return mcu_ota_data.e_mcu_ota_state; 
+	return mcu_ota_data; 
 }
 
 /********************************************************************************
@@ -366,7 +473,7 @@ mcu_ota_state_e Mcu_Ota_Get_State(void)
  *******************************************************************************/
 void Mcu_Ota_Set_State(mcu_ota_state_e state)                
 { 
-    mcu_ota_data.e_mcu_ota_state = state; 
+	mcu_ota_data.e_mcu_ota_state = state; 
 }
 
 /**** (c) *************************** END OF FILE **/

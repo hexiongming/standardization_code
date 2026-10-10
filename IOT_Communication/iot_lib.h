@@ -65,6 +65,8 @@ typedef enum
     IOT_EVT_WIFI_CONNECTED,         /* +WEVENT:CONNECTTED       已连接路由器 */
     IOT_EVT_WIFI_TIMEOUT,           /* +WEVENT:TIMEOUT          配网超时 */
     IOT_EVT_WIFI_UNBIND_SUCCESS,    /* +WEVENT:UNBIND,SUCCESS   解绑成功 */
+	IOT_EVT_WIFI_STATION_UP,        /* STATION_UP               已连接路由器 */
+	IOT_EVT_WIFI_STATION_DOWN,      /* STATION_DOWN             未连接路由器*/
 
     /* 云端下发指令 */
     IOT_EVT_MQTT_RECV,              /* +MQTTRECV:0,<len>,<json>  云端下发 */

@@ -44,7 +44,6 @@ extern "C" {
 typedef bool bool_t;
 #endif
 
-
 /* ========================= 配置宏 ========================= */
 #define IOT_UART_BAUDRATE           9600U   /* 串口波特率*/
 
@@ -57,9 +56,10 @@ typedef bool bool_t;
 
 #define IOT_RX_CMD_MAX_SIZE			(IOT_UART_RX_QUEUE_SIZE/2)	/* 接收WiFi下发的单条指令数据最大长度（字节）*/
 
-#define IOT_UART_TX_BUF_SIZE        128U    /* 发送缓冲区大小（字节）*/
-#define IOT_UART_TX_BUF_NUM			5U		/* 发送队列最大缓存条目数,确保 ≥ 5 需预留足够缓冲，否则有可能会导致需要上报的数据被覆盖*/
+#define IOT_UART_TX_BUF_SIZE        256U    /* 发送缓冲区大小（字节）*/
+#define IOT_UART_TX_BUF_NUM			5U		/* 发送队列最大缓存条目数,确保 ≥ 5 需预留足够缓冲，否则有可能会导致需要上报的数据被丢弃*/
 
+#define IOT_TX_INTERVAL_MS          (5U)    /* 两次发送之间的最小间隔（ms）单位10ms*/
 
 /* ========================= 平台适配层（移植时修改此处） ========================= */
 /* 示例：STM32 HAL，替换为实际平台 API */
@@ -116,14 +116,15 @@ void IOT_UART_Init(void);
  * @brief   将字符串压入发送队列
  * @details 拷贝字符串到队列槽位，队列满时静默丢弃
  * @param   str: 待入队的完整 AT 帧字符串，如 "AT+SOFTSTART=2\r\n"
+ * @param   len: 待入队字符串长度
  * @return  bool: true=入队成功  false=队列已满
  ******************************************************************************/
-bool IOT_UART_TxEnQueue(const char *str);
+bool IOT_UART_TxEnQueue(const char *str, uint16_t len);
 
 /*******************************************************************************
  * @brief   发送队列轮询
  * @details 尝试从队列取出队头一条数据发送；间隔未到时保留队头等待下次调用。
- *          在 IOT_RX_Handle 中每次调用
+ *          在 10ms 的周期中轮询调用
  * @param   void
  * @return  void
  ******************************************************************************/
